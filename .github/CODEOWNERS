@@ -1,0 +1,35 @@
+# Slug team coachdb-* masih placeholder, sesuaikan dengan team di organization.
+# Aturan yang lebih bawah menimpa aturan di atasnya.
+
+# Default: ketua supergroup
+*                                   @Tubes-Sistem-Basis-Data/coachdb-lead
+
+# Group 1 - Storage Manager
+/storage_manager/                   @Tubes-Sistem-Basis-Data/coachdb-sm
+/mocks/mock_storage_manager.py      @Tubes-Sistem-Basis-Data/coachdb-sm
+
+# Group 2 - Failure Recovery Manager
+/failure_recovery/                  @Tubes-Sistem-Basis-Data/coachdb-frm
+/mocks/mock_failure_recovery.py     @Tubes-Sistem-Basis-Data/coachdb-frm
+
+# Group 3 - Query Optimizer
+/query_optimizer/                   @Tubes-Sistem-Basis-Data/coachdb-qo
+/mocks/mock_query_optimizer.py      @Tubes-Sistem-Basis-Data/coachdb-qo
+
+# Group 4 - Concurrency Control Manager
+/concurrency_control/               @Tubes-Sistem-Basis-Data/coachdb-ccm
+/mocks/mock_concurrency_control.py  @Tubes-Sistem-Basis-Data/coachdb-ccm
+
+# Group 5 - Query Processor
+/query_processor/                   @Tubes-Sistem-Basis-Data/coachdb-qp
+/mocks/mock_query_processor.py      @Tubes-Sistem-Basis-Data/coachdb-qp
+/main.py                            @Tubes-Sistem-Basis-Data/coachdb-qp
+
+# Kontrak bersama: perlu persetujuan semua group
+/common/                            @Tubes-Sistem-Basis-Data/coachdb-sm @Tubes-Sistem-Basis-Data/coachdb-frm @Tubes-Sistem-Basis-Data/coachdb-qo @Tubes-Sistem-Basis-Data/coachdb-ccm @Tubes-Sistem-Basis-Data/coachdb-qp
+/tests/test_contract.py             @Tubes-Sistem-Basis-Data/coachdb-sm @Tubes-Sistem-Basis-Data/coachdb-frm @Tubes-Sistem-Basis-Data/coachdb-qo @Tubes-Sistem-Basis-Data/coachdb-ccm @Tubes-Sistem-Basis-Data/coachdb-qp
+/docs/changelog-kontrak.md          @Tubes-Sistem-Basis-Data/coachdb-sm @Tubes-Sistem-Basis-Data/coachdb-frm @Tubes-Sistem-Basis-Data/coachdb-qo @Tubes-Sistem-Basis-Data/coachdb-ccm @Tubes-Sistem-Basis-Data/coachdb-qp
+/docs/decisions.md                  @Tubes-Sistem-Basis-Data/coachdb-lead
+
+# config.py: nilai diatur SM, ikut disetujui ketua supergroup
+/common/config.py                   @Tubes-Sistem-Basis-Data/coachdb-sm @Tubes-Sistem-Basis-Data/coachdb-lead
