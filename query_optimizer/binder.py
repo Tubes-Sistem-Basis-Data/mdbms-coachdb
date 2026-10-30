@@ -5,6 +5,6 @@ from __future__ import annotations
 from common.plan import ParsedQuery
 
 
-def bind_query(query: ParsedQuery | None) -> ParsedQuery | None:
-    """Purpose: validate names against catalog. Mock: just return query."""
+def bind_query(query: ParsedQuery) -> ParsedQuery:
+    """Validate names against catalog"""
     return query

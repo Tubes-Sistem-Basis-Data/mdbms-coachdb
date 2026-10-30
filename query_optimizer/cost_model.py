@@ -5,6 +5,6 @@ from __future__ import annotations
 from common.plan import PlanNode
 
 
-def estimate_cost(plan: PlanNode | None) -> float:
-    """Purpose: compute query cost. Mock: zero."""
+def estimate_cost(plan: PlanNode) -> float:
+    """Compute query cost"""
     return 0.0
