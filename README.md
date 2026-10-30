@@ -78,11 +78,11 @@ Role bertanda *(usulan)* menunggu konfirmasi group masing-masing.
 
 | NIM | Nama | Role |
 | --- | --- | --- |
-| 13524016 | Wafiq Hibban Robbany | FR1 (usulan) |
-| 13524028 | Muhammad Nur Majiid | FR2 (usulan) |
-| 13524058 | Muhammad Naufal Romi Annafi | FR3 (usulan) |
-| 13524055 | Junior Natra Situmorang | FR4 (usulan) |
-| 13524031 | Vincent Rionarlie | FR5 (usulan) |
+| 13524016 | Wafiq Hibban Robbany | FR4 Checkpoint |
+| 13524028 | Muhammad Nur Majiid | FR2 Log |
+| 13524058 | Muhammad Naufal Romi Annafi | FR1 Facade |
+| 13524055 | Junior Natra Situmorang | FR3 Undo/callback |
+| 13524031 | Vincent Rionarlie | FR5 Recovery |
 
 ### Group 3 - Query Optimizer (Odin)
 
