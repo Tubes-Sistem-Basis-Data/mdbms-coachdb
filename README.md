@@ -88,11 +88,11 @@ Role bertanda *(usulan)* menunggu konfirmasi group masing-masing.
 
 | NIM | Nama | Role |
 | --- | --- | --- |
-| 13524145 | Dzakwan Muhammad K. P. P. (ketua group) | QO1 |
+| 13524145 | Angelina Andra Alanna | QO1 |
 | 13524049 | Arina Azka | QO2 |
 | 13524013 | Anindya Naufal Pinasthika | QO3 |
 | 13524097 | Muhammad Faiz Alfada Dharma | QO4 |
-| 13524079 | Angelina Andra Alanna (ketua supergroup) | QO5 |
+| 13524079 | Dzakwan Muhammad K. P. P. (ketua group) | QO5 |
 
 ### Group 4 - Concurrency Control Manager
 
