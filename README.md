@@ -108,11 +108,11 @@ Role bertanda *(usulan)* menunggu konfirmasi group masing-masing.
 
 | NIM | Nama | Role |
 | --- | --- | --- |
-| 13524019 | Kevin Wirya Valerian | QP1 (usulan) |
-| 13524043 | Emilio Justin | QP2 (usulan) |
-| 13524007 | Muhammad Ashkar | QP3 (usulan) |
-| 13524025 | Moh. Hafizh Irham Perdana | QP4 (usulan) |
-| 13523151 | Ardell Aghna Mahendra | QP5 (usulan) |
+| 13524019 | Kevin Wirya Valerian | QP1 |
+| 13524043 | Emilio Justin | QP2 |
+| 13524007 | Muhammad Ashkar | QP5 |
+| 13524025 | Moh. Hafizh Irham Perdana | QP4 |
+| 13523151 | Ardell Aghna Mahendra | QP3 |
 
 ---
 
