@@ -1,6 +1,3 @@
-# Slug team coachdb-* masih placeholder, sesuaikan dengan team di organization.
-# Aturan yang lebih bawah menimpa aturan di atasnya.
-
 # Default: ketua supergroup
 *                                   @Tubes-Sistem-Basis-Data/coachdb-lead
 
