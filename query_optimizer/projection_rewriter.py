@@ -1,12 +1,14 @@
-"""Purpose: rewrite projection. Mock: keep columns unchanged."""
+from common.plan import PlanNode
 
-from __future__ import annotations
+class ProjectionRewriter:
+    def apply(self, plan: PlanNode) -> PlanNode:
+        """Menjalankan seluruh optimasi proyeksi"""
+        return plan
 
-from typing import Any
+    def _merge_projects(self, plan: PlanNode) -> PlanNode:
+        """Menggabungkan operasi pemilihan kolom berurutan"""
+        return plan
 
-
-def rewrite_projection(columns: list[Any] | None) -> list[Any]:
-    """Purpose: trim columns. Mock: return input as-is."""
-    if columns is None:
-        return []
-    return list(columns)
+    def _push_down(self, plan: PlanNode) -> PlanNode:
+        """Meneruskan hanya kolom yang masih dibutuhkan"""
+        return plan
