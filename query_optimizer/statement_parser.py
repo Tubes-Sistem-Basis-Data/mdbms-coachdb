@@ -1,10 +1,8 @@
-"""Purpose: parse a statement. Mock: treat everything as a SELECT."""
-
-from __future__ import annotations
-
-from common.plan import ParsedQuery, QueryKind
+from query_optimizer.statement_dml_parser import DMLParser
+from query_optimizer.statement_txn_index_parser import TxnIndexParser
 
 
-def parse_statement(sql: str) -> ParsedQuery:
-    """Purpose: turn SQL into ParsedQuery. Mock: simple SELECT placeholder."""
-    return ParsedQuery(sql=sql, kind=QueryKind.SELECT, plan=None, estimated_cost=0.0)
+class StatementParser(DMLParser, TxnIndexParser):
+    """Gabungan 5 method di diagram: parse_update, parse_insert, parse_delete,
+    parse_create_index, parse_transaction"""
+    pass
