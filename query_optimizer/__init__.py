@@ -15,8 +15,8 @@ from query_optimizer.join_order_optimizer import order_joins
 from query_optimizer.optimizer import MockQueryOptimizer
 from query_optimizer.plan_printer import render_plan
 from query_optimizer.planner import plan_query
-from query_optimizer.projection_rewriter import rewrite_projection
-from query_optimizer.selection_rewriter import rewrite_selection
+from query_optimizer.projection_rewriter import ProjectionRewriter
+from query_optimizer.selection_rewriter import SelectionRewriter
 from query_optimizer.statement_parser import StatementParser
 
 __all__ = [
@@ -30,6 +30,6 @@ __all__ = [
     "StatementParser",
     "plan_query",
     "render_plan",
-    "rewrite_projection",
-    "rewrite_selection",
+    "ProjectionRewriter",
+    "SelectionRewriter",
 ]
