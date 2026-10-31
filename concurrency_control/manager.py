@@ -28,66 +28,60 @@ class CCManager(ConcurrencyControlManager):
         # TODO(CC4): self.schedule = ScheduleRecorder() once serializability.py exists
 
     def begin_transaction(self) -> int:
-        """
-        Assign tx_id = last_tx_id + 1 and a new timestamp, register with the protocol, log BEGIN.
-        Blocks while `pause_new_transactions` is active.
-        """
+        #Assign tx_id = last_tx_id + 1, log BEGIN.
+        #Blocks while `pause_new_transactions` active.
         raise NotImplementedError
 
     def validate_object(self, tx_id: int, resource: ResourceId, action: Action,change: DataChange | None = None,) -> AccessResponse:
-        """
-        Request access permission from the active protocol.
-        - tx not active, or WRITE without `change` -> ABORTED.
-        - protocol ALLOWED + WRITE -> write exactly one DATA log via the bridge, fill `lsn`.
-        - protocol ALLOWED -> record the operation in `self.schedule` (CC-09).
-        - protocol ABORTED -> run `self.abort(tx_id)` first, then return ABORTED
-        """
+        #Request access permission from the active protocol.
+        #- tx not active, or WRITE without `change` -> ABORTED.
+        #- protocol ALLOWED + WRITE -> write exactly one DATA log via the bridge, fill `lsn`.
+        #- protocol ALLOWED -> `self.schedule.record(tx_id, resource, action)` (CC-09).
+        #- protocol ABORTED -> run `self.abort(tx_id)` first, then return ABORTED
         raise NotImplementedError
 
     def commit(self, tx_id: int) -> TxResult:
-        """Log COMMIT + flush via the bridge, then `protocol.on_finish`, close the transaction"""
+        #Log COMMIT + flush via the bridge, then `protocol.on_finish`, close the transaction
         raise NotImplementedError
 
     def abort(self, tx_id: int) -> TxResult:
-        """
-        `bridge.abort` (ABORT_REQUEST, rollback, ABORT + flush), then release locks
-        Locks are released only after rollback succeeds (decisions.md no. 5)
-        """
+        #`bridge.abort` (ABORT_REQUEST, rollback, ABORT + flush), then release locks
+        #Locks are released only after rollback succeeds
         raise NotImplementedError
 
     def _require_active(self, tx_id: int) -> Transaction | None:
-        """Return the ACTIVE transaction with `tx_id`, or None. Call with `_mutex` held"""
+        #Return the ACTIVE transaction with `tx_id`, or None. Call with `_mutex` held
         raise NotImplementedError
 
     def _finish(self, tx_id: int, status: TxStatus) -> None:
-        """Set the final status, remove from the active table, `protocol.on_finish`, notify `_cond`"""
+        #Set the final status, remove from the active table, `protocol.on_finish`, notify `_cond`
         raise NotImplementedError
 
     def set_protocol(self, protocol: ProtocolType) -> None:
-        """Switch protocol. Raise `MdbmsError` if any transaction is still active"""
+        #Switch protocol. Raise `MdbmsError` if any transaction is still active
         raise NotImplementedError
 
     def get_protocol(self) -> ProtocolType:
-        """The currently active protocol"""
+        #The currently active protocol
         raise NotImplementedError
 
     @staticmethod
     def _make_protocol(protocol: ProtocolType) -> ConcurrencyProtocol:
-        """Create the protocol instance: LOCK_BASED -> `LockManager`, TIMESTAMP_BASED -> `TimestampOrdering`"""
+        #Create the protocol instance: LOCK_BASED -> `LockManager`, TIMESTAMP_BASED -> `TimestampProtocol`
         raise NotImplementedError
 
     def initialize(self, last_tx_id: int) -> None:
-        """Set the tx_id counter from recovery; next tx = last_tx_id + 1. (PIC CC3)"""
+        #Set the tx_id counter from recovery; next tx = last_tx_id + 1. (PIC CC3)
         raise NotImplementedError
 
     def pause_new_transactions(self) -> None:
-        """Hold subsequent `begin_transaction` calls"""
+        #Hold subsequent `begin_transaction` calls
         raise NotImplementedError
 
     def wait_until_idle(self) -> None:
-        """Block until no transaction is active"""
+        #Block until no transaction is active
         raise NotImplementedError
 
     def resume_transactions(self) -> None:
-        """Allow new transactions again and wake up the blocked ones"""
+        #Allow new transactions again and wake up the blocked ones
         raise NotImplementedError
