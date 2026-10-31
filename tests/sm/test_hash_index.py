@@ -1,6 +1,5 @@
 import pytest
 
-from common.errors import IndexDefinitionError
 from common.storage import RID
 from storage_manager.index import HashIndex, Index
 
@@ -17,20 +16,15 @@ def test_hash_index_attributes():
     assert idx._buckets == [{} for _ in range(8)]
 
 
-def test_range_not_supported():
-    with pytest.raises(IndexDefinitionError):
-        HashIndex("student", "id").range(1, 10)
-
-
 @pytest.mark.parametrize(
-    "name,args",
+    "name,args,expected",
     [
-        ("insert", (1, RID("student", 0, 0))),
-        ("delete", (1, RID("student", 0, 0))),
-        ("search", (1,)),
-        ("height", ()),
+        ("insert", (1, RID("student", 0, 0)), None),
+        ("delete", (1, RID("student", 0, 0)), None),
+        ("search", (1,), []),
+        ("range", (1, 10), []),
+        ("height", (), 0),
     ],
 )
-def test_unimplemented_raises(name, args):
-    with pytest.raises(NotImplementedError):
-        getattr(HashIndex("student", "id"), name)(*args)
+def test_default_returns(name, args, expected):
+    assert getattr(HashIndex("student", "id"), name)(*args) == expected

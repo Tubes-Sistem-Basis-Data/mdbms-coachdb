@@ -27,17 +27,31 @@ _METHODS = {
     "decode": (_SCHEMA, b""),
 }
 
+_EXPECTED = {
+    "encode_integer": b"",
+    "decode_integer": 0,
+    "encode_float": b"",
+    "decode_float": 0.0,
+    "encode_char": b"",
+    "decode_char": "",
+    "encode_varchar": b"",
+    "decode_varchar": "",
+    "record_size": 0,
+    "validate": (),
+    "encode": b"",
+    "decode": (),
+}
+
 
 class TestRecordCodecStub(unittest.TestCase):
     def test_methods_exist(self):
         for name in _METHODS:
             self.assertTrue(callable(getattr(RecordCodec, name)), name)
 
-    def test_methods_raise_not_implemented(self):
+    def test_methods_return_default(self):
         for name, args in _METHODS.items():
             with self.subTest(method=name):
-                with self.assertRaises(NotImplementedError):
-                    getattr(RecordCodec, name)(*args)
+                self.assertEqual(getattr(RecordCodec, name)(*args), _EXPECTED[name])
 
 
 if __name__ == "__main__":

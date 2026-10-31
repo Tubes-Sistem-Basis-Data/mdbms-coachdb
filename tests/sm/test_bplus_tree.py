@@ -49,6 +49,5 @@ def test_node_hierarchy():
     assert InternalNode().children == []
 
 
-def test_unimplemented_raises():
-    with pytest.raises(NotImplementedError):
-        BPlusTree("t", "c").search(1)
+def test_default_returns():
+    assert BPlusTree("t", "c").search(1) == []
