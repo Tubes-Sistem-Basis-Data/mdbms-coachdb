@@ -3,12 +3,27 @@
 from __future__ import annotations
 
 from common.errors import QuerySyntaxError
-from common.interfaces import QueryOptimizer
+from common.interfaces import QueryOptimizer, StorageManager
 from common.plan import ParsedQuery, PlanNode, Project, QueryKind, TableScan, TransactionCommand
+from query_optimizer.binder import Binder
+from query_optimizer.cost_model import CostModel
+from query_optimizer.lexer import Lexer
+from query_optimizer.parser_dispatcher import ParserDispatcher
+from query_optimizer.plan_printer import PlanPrinter
+from query_optimizer.planner import Planner
 
 
-class MockQueryOptimizer(QueryOptimizer):
+class QueryOptimizerFacade(QueryOptimizer):
     """Facade QO versi awal, hanya mengenali BEGIN, COMMIT, ABORT, dan SELECT."""
+
+    def __init__(self, sm: StorageManager | None = None) -> None:
+        self._catalog = sm
+        self._lexer = Lexer()
+        self._parser = ParserDispatcher()
+        self._binder = Binder(sm)
+        self._cost_model = CostModel(sm)
+        self._planner = Planner(self._cost_model)
+        self._printer = PlanPrinter()
 
     def parse_query(self, sql: str) -> ParsedQuery:
         """Ubah teks SQL jadi ParsedQuery. Dipanggil QP."""

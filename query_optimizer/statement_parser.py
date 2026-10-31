@@ -1,8 +1,29 @@
-from query_optimizer.statement_dml_parser import DMLParser
-from query_optimizer.statement_txn_index_parser import TxnIndexParser
+from common.plan import ParsedQuery, QueryKind
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from query_optimizer.lexer import TokenStream
 
 
-class StatementParser(DMLParser, TxnIndexParser):
-    """Gabungan 5 method di diagram: parse_update, parse_insert, parse_delete,
-    parse_create_index, parse_transaction"""
-    pass
+class StatementParser:
+    """Parser untuk perintah selain SELECT: UPDATE, INSERT, DELETE, CREATE INDEX, dan transaksi."""
+
+    def parse_update(self, tokens: "TokenStream") -> ParsedQuery:
+        """Mengenali UPDATE <tabel> SET <kolom> = <ekspresi> [WHERE <kondisi>]"""
+        return ParsedQuery(sql="", kind=QueryKind.UPDATE)
+
+    def parse_insert(self, tokens: "TokenStream") -> ParsedQuery:
+        """Mengenali INSERT INTO <tabel> VALUES (...) untuk satu baris"""
+        return ParsedQuery(sql="", kind=QueryKind.INSERT)
+
+    def parse_delete(self, tokens: "TokenStream") -> ParsedQuery:
+        """Mengenali DELETE FROM <tabel> [WHERE <kondisi>]"""
+        return ParsedQuery(sql="", kind=QueryKind.DELETE)
+
+    def parse_create_index(self, tokens: "TokenStream") -> ParsedQuery:
+        """Mengenali CREATE INDEX <nama> ON <tabel>(<kolom>) [USING BTREE|HASH]"""
+        return ParsedQuery(sql="", kind=QueryKind.CREATE_INDEX)
+
+    def parse_transaction(self, tokens: "TokenStream") -> ParsedQuery:
+        """Mengenali BEGIN [TRANSACTION], COMMIT, dan ABORT"""
+        return ParsedQuery(sql="", kind=QueryKind.TRANSACTION)
