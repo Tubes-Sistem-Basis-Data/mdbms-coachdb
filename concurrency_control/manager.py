@@ -11,6 +11,7 @@ from common.transaction import (
 )
 from concurrency_control.frm_bridge import AbortCoordinator, FrmBridge
 from concurrency_control.protocol import ConcurrencyProtocol, Transaction
+from concurrency_control.serializability import ScheduleRecorder
 
 
 class CCManager(ConcurrencyControlManager):
@@ -25,9 +26,9 @@ class CCManager(ConcurrencyControlManager):
         self._transactions: dict[int, Transaction] = {}
         self._paused = False
         self._protocol_type = protocol
-        # TODO(CC1): replace with self._make_protocol(protocol) once _make_protocol exists
+        # self._make_protocol(protocol) once _make_protocol
         self._protocol: ConcurrencyProtocol | None = None
-        # TODO(CC4): self.schedule = ScheduleRecorder() once serializability.py exists
+        self.schedule = ScheduleRecorder()
 
     def begin_transaction(self) -> int:
         #Assign tx_id = last_tx_id + 1, log BEGIN.
@@ -35,11 +36,11 @@ class CCManager(ConcurrencyControlManager):
         raise NotImplementedError
 
     def validate_object(self, tx_id: int, resource: ResourceId, action: Action,change: DataChange | None = None,) -> AccessResponse:
-        #Request access permission from the active protocol.
+        # Request access permission from the active protocol.
         #- tx not active, or WRITE without `change` -> ABORTED.
-        #- protocol ALLOWED + WRITE -> write exactly one DATA log via the bridge, fill `lsn`.
+        #- protocol ALLOWED + WRITE -> write one DATA log via bridge, fill `lsn`.
         #- protocol ALLOWED -> `self.schedule.record(tx_id, resource, action)` (CC-09).
-        #- protocol ABORTED -> run `self.abort(tx_id)` first, then return ABORTED
+        #- protocol ABORTED -> run `self.abort(tx_id)`, return ABORTED
         raise NotImplementedError
 
     def commit(self, tx_id: int) -> TxResult:
