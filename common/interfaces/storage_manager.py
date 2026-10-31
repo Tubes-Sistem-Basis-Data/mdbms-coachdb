@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Callable, Iterator
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING
 
 from common.catalog import IndexInfo, TableSchema, TableStats
 from common.storage import RID, Row
+
+if TYPE_CHECKING:
+    from common.interfaces.failure_recovery import FailureRecoveryManager
 
 
 class StorageManager(ABC):
@@ -75,3 +79,38 @@ class StorageManager(ABC):
     @abstractmethod
     def set_log_flusher(self, fn: Callable[[int], bool]) -> None:
         """Pasang callback `flush_log(page_lsn)` dari FRM. Dipanggil main.py."""
+
+    """ Nanti request buat FRM
+    @abstractmethod
+    def attach_wal(self, frm: FailureRecoveryManager) -> None:
+
+    @abstractmethod
+    def undo_insert(self, table: str, rid: RID) -> None:
+
+    @abstractmethod
+    def undo_update(self, table: str, rid: RID, before) -> None:
+
+    @abstractmethod
+    def undo_delete(self, table: str, rid: RID, before) -> None:
+
+    @abstractmethod
+    def redo_insert(self, table: str, rid: RID, after) -> None:
+
+    @abstractmethod
+    def redo_update(self, table: str, rid: RID, after) -> None:
+
+    @abstractmethod
+    def redo_delete(self, table: str, rid: RID) -> None:
+
+    @abstractmethod
+    def flush_all(self) -> None:
+
+    @abstractmethod
+    def snapshot_to(self, path: str) -> None:
+
+    @abstractmethod
+    def restore_from(self, path: str) -> None:
+
+    @abstractmethod
+    def rebuild_indexes(self) -> None:
+    """

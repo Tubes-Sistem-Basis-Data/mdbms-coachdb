@@ -7,27 +7,29 @@ import inspect
 import json
 import pickle
 import unittest
+from datetime import datetime
 
 from common import (
     NO_RECORD,
+    RID,
     AccessStatus,
     Action,
     ChangeOp,
     DataChange,
     ExecutionResult,
     LogKind,
+    MdbmsError,
     ProtocolType,
     QueryKind,
     QuerySyntaxError,
     RecoveryTarget,
     ResourceId,
-    RID,
     SemanticError,
     TxStatus,
 )
 from common.interfaces import (
     ConcurrencyControlManager,
-    FailureRecoveryManager,
+    IFailureRecovery,
     QueryOptimizer,
     QueryProcessor,
     StorageManager,
@@ -45,7 +47,7 @@ PAIRS = [
     (MockQueryOptimizer, QueryOptimizer),
     (MockStorageManager, StorageManager),
     (MockConcurrencyControlManager, ConcurrencyControlManager),
-    (MockFailureRecoveryManager, FailureRecoveryManager),
+    (MockFailureRecoveryManager, IFailureRecovery),
 ]
 
 
@@ -53,9 +55,10 @@ def build():
     sm = MockStorageManager()
     frm = MockFailureRecoveryManager()
     ccm = MockConcurrencyControlManager(frm)
-    frm.set_dependencies(sm, ccm)
-    sm.set_log_flusher(frm.flush_log)
-    ccm.initialize(frm.recover().last_tx_id)
+    frm.attach_storage(sm)
+    frm.attach_ccm(ccm)
+    sm.attach_wal(frm)
+    ccm.initialize(frm.recover().max_tx_id)
     qo = MockQueryOptimizer(sm)
     qp = MockQueryProcessor(qo, sm, ccm)
     return sm, frm, ccm, qo, qp
@@ -90,13 +93,11 @@ class TestSharedTypes(unittest.TestCase):
         self.assertEqual(len({RID("t", 0, 1), RID("t", 0, 1)}), 1)
         self.assertEqual(len({ResourceId("t"), ResourceId("t")}), 1)
 
-    def test_recovery_target_exactly_one(self):
-        RecoveryTarget(tx_id=3)
-        RecoveryTarget(timestamp=1.0)
-        with self.assertRaises(ValueError):
-            RecoveryTarget()
-        with self.assertRaises(ValueError):
-            RecoveryTarget(timestamp=1.0, tx_id=3)
+    def test_recovery_target_fields(self):
+        self.assertEqual(RecoveryTarget(tx_id=3).tx_id, 3)
+        self.assertEqual(RecoveryTarget(timestamp=datetime.now().astimezone()).tx_id, None)
+        target = RecoveryTarget(timestamp=datetime.now().astimezone(), tx_id=3)
+        self.assertEqual(target.tx_id, 3)
 
     def test_execution_result_json_roundtrip(self):
         res = ExecutionResult(ok=True, columns=["a"], rows=[[1, None]], affected_rows=0, message="x")
@@ -114,7 +115,7 @@ class TestSmokeFlow(unittest.TestCase):
         self.assertEqual(res.columns, ["id", "name", "gpa", "gender"])
         self.assertEqual(len(res.rows), 5)
         self.assertIsNone(self.session.tx_id)
-        kinds = [r.kind for r in self.frm.read_log()]
+        kinds = [r.kind for r in self.frm.show_log(None)]
         self.assertEqual(kinds, [LogKind.BEGIN, LogKind.COMMIT])
 
     def test_sample_tables_and_stats(self):
@@ -143,8 +144,8 @@ class TestSmokeFlow(unittest.TestCase):
         self.assertEqual(self.session.tx_id, tx_id)
         self.assertTrue(self.qp.execute_query("ABORT;", self.session).ok)
         self.assertIsNone(self.session.tx_id)
-        kinds = [r.kind for r in self.frm.read_log(tx_id)]
-        self.assertEqual(kinds, [LogKind.BEGIN, LogKind.ABORT_REQUEST, LogKind.ABORT])
+        kinds = [r.kind for r in self.frm.show_log(tx_id)]
+        self.assertEqual(kinds, [LogKind.BEGIN, LogKind.ABORT_REQUEST, LogKind.ABORT_END])
 
     def test_explain(self):
         parsed = self.qo.parse_query("EXPLAIN SELECT * FROM enrollment;")
@@ -179,7 +180,10 @@ class TestSmokeFlow(unittest.TestCase):
         self.assertEqual(again.lsn, resp.lsn)
         self.sm.update("student", row.rid, after, resp.lsn)
         self.assertEqual(self.sm.fetch("student", row.rid).values, after)
-        self.assertEqual(len([r for r in self.frm.read_log(tx) if r.kind is LogKind.DATA]), 1)
+        self.assertEqual(
+            len([r for r in self.frm.show_log(tx) if r.kind is LogKind.UPDATE]),
+            1,
+        )
         self.assertTrue(self.ccm.abort(tx).ok)
         self.assertEqual(self.sm.fetch("student", row.rid).values, before)
 
@@ -205,7 +209,7 @@ class TestSmokeFlow(unittest.TestCase):
 
     def test_protocol_switch_blocked_by_active_tx(self):
         tx = self.ccm.begin_transaction()
-        with self.assertRaises(Exception):
+        with self.assertRaises(MdbmsError):
             self.ccm.set_protocol(ProtocolType.TIMESTAMP_BASED)
         self.ccm.commit(tx)
         self.ccm.set_protocol(ProtocolType.TIMESTAMP_BASED)
