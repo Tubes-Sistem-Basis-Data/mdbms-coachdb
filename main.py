@@ -8,6 +8,11 @@ import sys
 from common import config
 from common.interfaces import QueryProcessor
 from common.transaction import ProtocolType
+from concurrency_control import CCManager
+from failure_recovery import FailureRecoveryManager
+from query_optimizer import QueryOptimizerFacade
+from query_processor.facade import QueryProcessorFacade
+from storage_manager.facade import StorageManager
 
 PROTOCOLS = {"lock": ProtocolType.LOCK_BASED, "timestamp": ProtocolType.TIMESTAMP_BASED}
 
@@ -25,8 +30,6 @@ DEMO_QUERIES = [
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Argumen baris perintah."""
     parser = argparse.ArgumentParser(description="mDBMS CoachDB")
-    parser.add_argument("--mock", action=argparse.BooleanOptionalAction, default=True,
-                        help="pakai mock untuk semua komponen (default: ya)")
     parser.add_argument("--protocol", choices=sorted(PROTOCOLS), default=config.DEFAULT_PROTOCOL,
                         help="protokol concurrency control")
     parser.add_argument("--data-dir", default=config.DATA_DIR, help="direktori data")
@@ -36,21 +39,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def bootstrap(args: argparse.Namespace) -> QueryProcessor:
     """Bangun SM, FRM, CCM, QO, QP dan jalankan recovery. Exit 1 jika gagal."""
-    if not args.mock:
-        print("error: komponen asli belum tersedia, jalankan dengan --mock", file=sys.stderr)
-        sys.exit(1)
-
-    from mocks import (
-        MockConcurrencyControlManager,
-        MockFailureRecoveryManager,
-        MockQueryOptimizer,
-        MockQueryProcessor,
-        MockStorageManager,
-    )
-
-    sm = MockStorageManager(args.data_dir)
-    frm = MockFailureRecoveryManager()
-    ccm = MockConcurrencyControlManager(frm)
+    sm = StorageManager(args.data_dir)
+    frm = FailureRecoveryManager()
+    ccm = CCManager(frm)
     frm.set_dependencies(sm, ccm)
     sm.set_log_flusher(frm.flush_log)
 
@@ -63,8 +54,8 @@ def bootstrap(args: argparse.Namespace) -> QueryProcessor:
     print(f"Protokol aktif: {ccm.get_protocol().value}")
     ccm.initialize(result.last_tx_id)
 
-    qo = MockQueryOptimizer(sm)
-    return MockQueryProcessor(qo, sm, ccm)
+    qo = QueryOptimizerFacade(sm)
+    return QueryProcessorFacade(qo, sm, ccm, frm)
 
 
 def print_result(sql: str, result) -> None:

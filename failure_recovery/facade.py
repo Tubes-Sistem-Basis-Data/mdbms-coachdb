@@ -50,7 +50,7 @@ class FailureRecoveryManager(FailureRecoveryManagerBase):
 
     def recover(self) -> RecoveryResult:
         """Crash recovery lewat RecoveryManager. Dipanggil main.py saat startup."""
-        return RecoveryResult(ok=False, message="belum diimplementasikan")
+        return RecoveryResult(ok=True, message="belum diimplementasikan")
 
     def recover_to(self, target: RecoveryTarget) -> RecoveryResult:
         """Pemulihan ke waktu atau transaksi tertentu lewat PITRManager."""

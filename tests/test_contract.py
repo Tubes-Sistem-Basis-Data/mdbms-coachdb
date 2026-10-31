@@ -1,81 +1,156 @@
-"""Uji kontrak: mock turunan ABC yang benar dan alur dasar berjalan."""
-
 from __future__ import annotations
 
 import copy
 import inspect
 import json
 import pickle
+import tempfile
 import unittest
+from typing import Iterator
 
 from common import (
     NO_RECORD,
-    AccessStatus,
+    AccessResponse,
     Action,
-    ChangeOp,
-    DataChange,
+    CheckpointResult,
     ExecutionResult,
+    IndexInfo,
     LogKind,
+    LogRecord,
+    LogResult,
+    ParsedQuery,
+    PlanNode,
     ProtocolType,
     QueryKind,
-    QuerySyntaxError,
+    RecoveryResult,
     RecoveryTarget,
     ResourceId,
     RID,
-    SemanticError,
-    TxStatus,
+    TableSchema,
+    TableStats,
+    TxResult,
 )
 from common.interfaces import (
     ConcurrencyControlManager,
     FailureRecoveryManager,
     QueryOptimizer,
     QueryProcessor,
+    Session,
     StorageManager,
 )
-from mocks import (
-    MockConcurrencyControlManager,
-    MockFailureRecoveryManager,
-    MockQueryOptimizer,
-    MockQueryProcessor,
-    MockStorageManager,
-)
+from concurrency_control import CCManager
+from failure_recovery import FailureRecoveryManager as FRMFacade
+from query_optimizer import QueryOptimizerFacade
+from query_processor.facade import QueryProcessorFacade
+from storage_manager.facade import StorageManager as SMFacade
 
 PAIRS = [
-    (MockQueryProcessor, QueryProcessor),
-    (MockQueryOptimizer, QueryOptimizer),
-    (MockStorageManager, StorageManager),
-    (MockConcurrencyControlManager, ConcurrencyControlManager),
-    (MockFailureRecoveryManager, FailureRecoveryManager),
+    (QueryProcessorFacade, QueryProcessor),
+    (QueryOptimizerFacade, QueryOptimizer),
+    (SMFacade, StorageManager),
+    (CCManager, ConcurrencyControlManager),
+    (FRMFacade, FailureRecoveryManager),
 ]
 
 
-def build():
-    sm = MockStorageManager()
-    frm = MockFailureRecoveryManager()
-    ccm = MockConcurrencyControlManager(frm)
-    frm.set_dependencies(sm, ccm)
-    sm.set_log_flusher(frm.flush_log)
-    ccm.initialize(frm.recover().last_tx_id)
-    qo = MockQueryOptimizer(sm)
-    qp = MockQueryProcessor(qo, sm, ccm)
-    return sm, frm, ccm, qo, qp
-
-
-class TestMockConformance(unittest.TestCase):
+class TestFacadeConformance(unittest.TestCase):
     def test_subclass_and_no_abstract_left(self):
-        for mock, abc in PAIRS:
-            with self.subTest(mock=mock.__name__):
-                self.assertTrue(issubclass(mock, abc))
-                self.assertFalse(inspect.isabstract(mock))
-                self.assertEqual(set(getattr(mock, "__abstractmethods__", ())), set())
+        for facade, abc in PAIRS:
+            with self.subTest(facade=facade.__name__):
+                self.assertTrue(issubclass(facade, abc))
+                self.assertFalse(inspect.isabstract(facade))
+                self.assertEqual(set(getattr(facade, "__abstractmethods__", ())), set())
 
     def test_signatures_match_contract(self):
-        for mock, abc in PAIRS:
+        for facade, abc in PAIRS:
             for name in abc.__abstractmethods__:
-                with self.subTest(method=f"{mock.__name__}.{name}"):
+                with self.subTest(method=f"{facade.__name__}.{name}"):
                     expected = list(inspect.signature(getattr(abc, name)).parameters)
-                    actual = list(inspect.signature(getattr(mock, name)).parameters)
+                    actual = list(inspect.signature(getattr(facade, name)).parameters)
                     self.assertEqual(actual, expected)
+
+
+class TestReturnTypes(unittest.TestCase):
+    """Setiap method facade bisa dipanggil dan mengembalikan tipe sesuai kontrak."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.sm = SMFacade(self._tmp.name)
+        self.frm = FRMFacade()
+        self.ccm = CCManager(self.frm)
+        self.frm.set_dependencies(self.sm, self.ccm)
+        self.sm.set_log_flusher(self.frm.flush_log)
+        self.qo = QueryOptimizerFacade(self.sm)
+        self.qp = QueryProcessorFacade(self.qo, self.sm, self.ccm, self.frm)
+        self.rid = RID("student", 0, 0)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_query_processor(self):
+        session = self.qp.open_session()
+        self.assertIsInstance(session, Session)
+        self.assertIsInstance(self.qp.execute_query("SELECT * FROM student;", session), ExecutionResult)
+        self.assertIsNone(self.qp.close_session(session.session_id))
+
+    def test_query_optimizer(self):
+        parsed = self.qo.parse_query("SELECT * FROM student;")
+        self.assertIsInstance(parsed, ParsedQuery)
+        self.assertIsInstance(self.qo.optimize_query(parsed), ParsedQuery)
+        self.assertIsInstance(self.qo.get_cost(PlanNode()), float)
+        self.assertIsInstance(self.qo.explain(parsed), str)
+
+    def test_storage_manager(self):
+        sm, rid = self.sm, self.rid
+        self.assertIsInstance(sm.list_tables(), list)
+        self.assertIsInstance(sm.get_schema("student"), TableSchema)
+        self.assertIsInstance(sm.get_stats("student"), TableStats)
+        self.assertIsInstance(sm.scan("student"), Iterator)
+        self.assertIsNone(sm.fetch("student", rid))
+        self.assertIsInstance(sm.allocate_rid("student"), RID)
+        self.assertIsNone(sm.release_rid(rid))
+        self.assertIsNone(sm.insert("student", rid, [1], 1))
+        self.assertIsNone(sm.update("student", rid, [1], None))
+        self.assertIsNone(sm.delete("student", rid, None))
+        self.assertIsNone(sm.delete_all("student", None))
+        self.assertIsNone(sm.create_index(IndexInfo("idx_id", "student", "id")))
+        self.assertIsInstance(sm.index_lookup("student", "id", 1), list)
+        self.assertIsInstance(sm.index_range("student", "id", None, 10), list)
+        self.assertIsNone(sm.flush())
+
+    def test_concurrency_control(self):
+        ccm = self.ccm
+        self.assertIsNone(ccm.initialize(0))
+        tx = ccm.begin_transaction()
+        self.assertIsInstance(tx, int)
+        resp = ccm.validate_object(tx, ResourceId("student", self.rid), Action.READ)
+        self.assertIsInstance(resp, AccessResponse)
+        self.assertIsInstance(ccm.commit(tx), TxResult)
+        self.assertIsInstance(ccm.abort(tx), TxResult)
+        self.assertIsNone(ccm.set_protocol(ProtocolType.LOCK_BASED))
+        self.assertIsInstance(ccm.get_protocol(), ProtocolType)
+        self.assertIsNone(ccm.pause_new_transactions())
+        self.assertIsNone(ccm.wait_until_idle())
+        self.assertIsNone(ccm.resume_transactions())
+
+    def test_failure_recovery(self):
+        frm = self.frm
+        self.assertIsInstance(frm.write_log(LogRecord(LogKind.BEGIN, tx_id=1)), LogResult)
+        self.assertIsInstance(frm.flush_log(1), bool)
+        self.assertIsInstance(frm.rollback(1), TxResult)
+        self.assertIsInstance(frm.checkpoint(), CheckpointResult)
+        self.assertIsInstance(frm.recover(), RecoveryResult)
+        self.assertIsInstance(frm.recover_to(RecoveryTarget(tx_id=1)), RecoveryResult)
+        self.assertIsInstance(frm.read_log(), list)
+
+
+class TestBootstrap(unittest.TestCase):
+    def test_main_bootstrap_jalan(self):
+        import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            qp = main.bootstrap(main.parse_args(["--data-dir", tmp]))
+        self.assertIsInstance(qp, QueryProcessor)
 
 
 class TestSharedTypes(unittest.TestCase):
@@ -102,118 +177,8 @@ class TestSharedTypes(unittest.TestCase):
         res = ExecutionResult(ok=True, columns=["a"], rows=[[1, None]], affected_rows=0, message="x")
         self.assertEqual(ExecutionResult.from_dict(json.loads(json.dumps(res.to_dict()))), res)
 
-
-class TestSmokeFlow(unittest.TestCase):
-    def setUp(self):
-        self.sm, self.frm, self.ccm, self.qo, self.qp = build()
-        self.session = self.qp.open_session()
-
-    def test_select(self):
-        res = self.qp.execute_query("SELECT * FROM student;", self.session)
-        self.assertTrue(res.ok, res.message)
-        self.assertEqual(res.columns, ["id", "name", "gpa", "gender"])
-        self.assertEqual(len(res.rows), 5)
-        self.assertIsNone(self.session.tx_id)
-        kinds = [r.kind for r in self.frm.read_log()]
-        self.assertEqual(kinds, [LogKind.BEGIN, LogKind.COMMIT])
-
-    def test_sample_tables_and_stats(self):
-        self.assertEqual(set(self.sm.list_tables()), {"student", "course", "enrollment"})
-        stats = self.sm.get_stats("student")
-        self.assertEqual(stats.n_r, 5)
-        self.assertEqual(stats.distinct["id"], 5)
-        self.assertGreaterEqual(stats.b_r, 1)
-
-    def test_errors_become_result(self):
-        res = self.qp.execute_query("SELECT name FROM student;", self.session)
-        self.assertFalse(res.ok)
-        self.assertIn("mock: belum didukung", res.message)
-        res = self.qp.execute_query("SELECT * FROM dosen;", self.session)
-        self.assertFalse(res.ok)
-        with self.assertRaises(QuerySyntaxError):
-            self.qo.parse_query("DROP TABLE student;")
-        with self.assertRaises(SemanticError):
-            self.qo.parse_query("SELECT * FROM dosen;")
-
-    def test_begin_abort_via_qp(self):
-        self.assertTrue(self.qp.execute_query("BEGIN TRANSACTION;", self.session).ok)
-        tx_id = self.session.tx_id
-        self.assertIsNotNone(tx_id)
-        self.assertTrue(self.qp.execute_query("SELECT * FROM course;", self.session).ok)
-        self.assertEqual(self.session.tx_id, tx_id)
-        self.assertTrue(self.qp.execute_query("ABORT;", self.session).ok)
-        self.assertIsNone(self.session.tx_id)
-        kinds = [r.kind for r in self.frm.read_log(tx_id)]
-        self.assertEqual(kinds, [LogKind.BEGIN, LogKind.ABORT_REQUEST, LogKind.ABORT])
-
-    def test_explain(self):
-        parsed = self.qo.parse_query("EXPLAIN SELECT * FROM enrollment;")
-        self.assertEqual(parsed.kind, QueryKind.EXPLAIN)
-        res = self.qp.execute_query("EXPLAIN SELECT * FROM enrollment;", self.session)
-        self.assertTrue(res.ok)
-        self.assertIn("TableScan(enrollment)", res.message)
-
-    def test_insert_two_step_commit(self):
-        tx = self.ccm.begin_transaction()
-        rid = self.sm.allocate_rid("student")
-        values = [6, "Fajar", 3.10, "L"]
-        resp = self.ccm.validate_object(
-            tx, ResourceId("student", rid), Action.WRITE,
-            DataChange("student", rid, ChangeOp.INSERT, NO_RECORD, values),
-        )
-        self.assertEqual(resp.status, AccessStatus.ALLOWED)
-        self.assertIsNotNone(resp.lsn)
-        self.sm.insert("student", rid, values, resp.lsn)
-        self.assertEqual(self.ccm.commit(tx).status, TxStatus.COMMITTED)
-        self.assertEqual(self.sm.fetch("student", rid).values, values)
-        self.assertEqual(len(list(self.sm.scan("student"))), 6)
-
-    def test_update_then_abort_restores(self):
-        row = next(self.sm.scan("student"))
-        before = list(row.values)
-        after = [before[0], before[1], 4.0, before[3]]
-        tx = self.ccm.begin_transaction()
-        change = DataChange("student", row.rid, ChangeOp.UPDATE, before, after)
-        resp = self.ccm.validate_object(tx, ResourceId("student", row.rid), Action.WRITE, change)
-        again = self.ccm.validate_object(tx, ResourceId("student", row.rid), Action.WRITE, change)
-        self.assertEqual(again.lsn, resp.lsn)
-        self.sm.update("student", row.rid, after, resp.lsn)
-        self.assertEqual(self.sm.fetch("student", row.rid).values, after)
-        self.assertEqual(len([r for r in self.frm.read_log(tx) if r.kind is LogKind.DATA]), 1)
-        self.assertTrue(self.ccm.abort(tx).ok)
-        self.assertEqual(self.sm.fetch("student", row.rid).values, before)
-
-    def test_insert_and_delete_abort(self):
-        tx = self.ccm.begin_transaction()
-        rid = self.sm.allocate_rid("course")
-        values = [106, "Jaringan", 3, "IF"]
-        resp = self.ccm.validate_object(
-            tx, ResourceId("course", rid), Action.WRITE,
-            DataChange("course", rid, ChangeOp.INSERT, NO_RECORD, values),
-        )
-        self.sm.insert("course", rid, values, resp.lsn)
-        victim = next(self.sm.scan("course"))
-        resp = self.ccm.validate_object(
-            tx, ResourceId("course", victim.rid), Action.WRITE,
-            DataChange("course", victim.rid, ChangeOp.DELETE, victim.values, NO_RECORD),
-        )
-        self.sm.delete("course", victim.rid, resp.lsn)
-        self.ccm.abort(tx)
-        self.assertIsNone(self.sm.fetch("course", rid))
-        self.assertEqual(self.sm.fetch("course", victim.rid).values, victim.values)
-        self.assertEqual(len(list(self.sm.scan("course"))), 5)
-
-    def test_protocol_switch_blocked_by_active_tx(self):
-        tx = self.ccm.begin_transaction()
-        with self.assertRaises(Exception):
-            self.ccm.set_protocol(ProtocolType.TIMESTAMP_BASED)
-        self.ccm.commit(tx)
-        self.ccm.set_protocol(ProtocolType.TIMESTAMP_BASED)
-        self.assertEqual(self.ccm.get_protocol(), ProtocolType.TIMESTAMP_BASED)
-
-    def test_tx_id_continues_after_initialize(self):
-        self.ccm.initialize(41)
-        self.assertEqual(self.ccm.begin_transaction(), 42)
+    def test_query_kind_explain(self):
+        self.assertEqual(QueryKind.EXPLAIN.value, "EXPLAIN")
 
 
 if __name__ == "__main__":

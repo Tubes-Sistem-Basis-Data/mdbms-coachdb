@@ -2,7 +2,7 @@
 
 Implementasi oleh group QP (Group 5).
 
-Facade: `QueryProcessor` di `common/interfaces/query_processor.py`. Selama implementasi asli belum ada, komponen lain memakai `mocks/mock_query_processor.py`.
+Facade: `QueryProcessor` di `common/interfaces/query_processor.py`.
 
 ## Requirement
 

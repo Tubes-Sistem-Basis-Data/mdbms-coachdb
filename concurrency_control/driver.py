@@ -37,7 +37,7 @@ class ScenarioResult:
     # Ini hasil skenario yang beneran jalan, jadi jangan isi dummy terus dianggap lulus
     # statuses catat respons pertama tiap R/W termasuk WAIT. retry ga dihitung jadi input baru
     # Yang akhirnya diizinin dan dieksekusi masuk final_schedule buat dicek cc4
-    # final_schedule dicatat driver sendiri (bukan ccm.schedule) biar tetep jalan pakai mock ccm
+    # final_schedule dicatat driver sendiri (bukan ccm.schedule) biar tetep jalan selama CCManager masih skeleton
 
     statuses: list[AccessStatus]
     final_schedule: Schedule
@@ -60,7 +60,7 @@ class ScheduleParser:
 
 class CCMDriver:
     # Buat tes ccm sendiri tanpa qp atau cli qp. ccm sama checker dikasih dari yang manggil
-    # Awal integrasi pakai mock ccm yang udah ada dulu, CCManager masih skeleton
+    # Selama CCManager masih skeleton, method-nya cuma balikin nilai default
 
     def __init__(
         self,

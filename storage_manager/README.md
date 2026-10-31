@@ -2,7 +2,7 @@
 
 Implementasi oleh group SM (Group 1, Rust).
 
-Interface: `StorageManager` di `common/interfaces/storage_manager.py`. Facade: `StorageManager` di `storage_manager/facade.py`. Selama implementasi asli belum ada, komponen lain memakai `MockStorageManager` di `mocks/mock_storage_manager.py`. Tipe internal SM (`Value`, `LSN`) ada di `storage_manager/types.py`, error internal di `storage_manager/errors.py`.
+Interface: `StorageManager` di `common/interfaces/storage_manager.py`. Facade: `StorageManager` di `storage_manager/facade.py`. Tipe internal SM (`Value`, `LSN`) ada di `storage_manager/types.py`, error internal di `storage_manager/errors.py`.
 
 ## Requirement
 
