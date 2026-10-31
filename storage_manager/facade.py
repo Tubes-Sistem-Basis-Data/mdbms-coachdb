@@ -17,7 +17,7 @@ class StorageManager(StorageManagerAPI):
         self._buffer_frames = buffer_frames
 
     def list_tables(self) -> list[str]:
-        return 0
+        return []
 
     def get_table_schema(self, table: str) -> TableSchema:
         return None
@@ -29,19 +29,19 @@ class StorageManager(StorageManagerAPI):
         return None
 
     def list_indexes(self, table: str | None = None) -> list[IndexInfo]:
-        return 0
+        return []
 
     def validate(self, table: str, values: list) -> list:
-        return 0
+        return []
 
     def scan(self, table: str) -> Iterator[Row]:
-        return None
+        return iter(())
 
     def fetch(self, table: str, rid: RID) -> Row | None:
         return None
 
     def allocate_rid(self, table: str) -> RID:
-        return 0
+        return None
 
     def release_rid(self, rid: RID) -> None:
         return None
@@ -71,10 +71,10 @@ class StorageManager(StorageManagerAPI):
         return None
 
     def index_lookup(self, table: str, column: str, key) -> list[RID]:
-        return 0
+        return []
 
     def index_range(self, table: str, column: str, low, high) -> list[RID]:
-        return 0
+        return []
 
     def rebuild_indexes(self) -> None:
         return None

@@ -24,17 +24,17 @@ class RecordManager:
         self._index_manager = index_manager
         self._stats = stats
 
-    def validate(self, table: str, values: list):
-        return 0
+    def validate(self, table: str, values: list) -> list:
+        return []
 
     def scan(self, table: str) -> Iterator[Row]:
-        return None
+        return iter(())
 
     def fetch(self, table: str, rid: RID) -> Row | None:
         return None
 
     def allocate_rid(self, table: str) -> RID:
-        return 0
+        return None
 
     def release_rid(self, rid: RID) -> None:
         return None
