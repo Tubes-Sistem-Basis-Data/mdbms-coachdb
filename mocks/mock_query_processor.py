@@ -14,7 +14,14 @@ from common.interfaces import (
     Session,
     StorageManager,
 )
-from common.plan import ParsedQuery, PlanNode, Project, QueryKind, TableScan, TransactionCommand
+from common.plan import (
+    ParsedQuery,
+    PlanNode,
+    Project,
+    QueryKind,
+    TableScan,
+    TransactionCommand,
+)
 from common.result import ExecutionResult
 from common.transaction import AccessStatus, Action, ResourceId
 

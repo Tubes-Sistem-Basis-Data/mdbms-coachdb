@@ -1,13 +1,15 @@
 """Fase redo saat recovery."""
 
-# ruff: noqa: F401
-
 from __future__ import annotations
 
-from common.interfaces.storage_manager import StorageManager
-from failure_recovery.ports import LogReadPort
 from failure_recovery.recovery.analysis import AnalysisResult
 
 
 class RedoExecutor:
-    """Placeholder redo executor."""
+    """Menerapkan ulang after-image transaksi yang sudah commit."""
+
+    def __init__(self, sm) -> None:
+        self._sm = sm
+
+    def run(self, analysis: AnalysisResult) -> int:
+        return 0

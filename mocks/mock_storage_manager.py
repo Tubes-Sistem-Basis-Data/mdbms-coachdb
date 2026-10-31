@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import math
 import threading
-from typing import Callable, Iterator
+from collections.abc import Callable, Iterator
+from pathlib import Path
 
 from common import config
 from common.catalog import (
@@ -115,10 +117,10 @@ class MockStorageManager(StorageManager):
             raise SemanticError(f"tabel '{table}' tidak ada", object_name=table)
         return schema
 
-    def _touch(self, rid: RID, lsn: int | None) -> None:
+    def _touch(self, table: str, rid: RID, lsn: int | None) -> None:
         if lsn is None:
             return
-        key = (rid.table, rid.page_id)
+        key = (table, rid.page_id)
         self._page_lsn[key] = max(self._page_lsn.get(key, -1), lsn)
 
     def list_tables(self) -> list[str]:
@@ -163,7 +165,7 @@ class MockStorageManager(StorageManager):
         with self._lock:
             n = self._next_slot[table]
             self._next_slot[table] = n + 1
-            rid = RID(table, n // SLOTS_PER_PAGE, n % SLOTS_PER_PAGE)
+            rid = RID(n // SLOTS_PER_PAGE, n % SLOTS_PER_PAGE)
             self._reserved.add(rid)
         return rid
 
@@ -180,7 +182,7 @@ class MockStorageManager(StorageManager):
         with self._lock:
             self._reserved.discard(rid)
             self._rows[table][rid] = list(values)
-            self._touch(rid, lsn)
+            self._touch(table, rid, lsn)
 
     def update(self, table: str, rid: RID, values: list, lsn: int | None) -> None:
         """Ganti nilai baris. Raise StorageError jika baris tidak ada."""
@@ -191,21 +193,21 @@ class MockStorageManager(StorageManager):
             if rid not in self._rows[table]:
                 raise StorageError(f"baris {rid} tidak ada")
             self._rows[table][rid] = list(values)
-            self._touch(rid, lsn)
+            self._touch(table, rid, lsn)
 
     def delete(self, table: str, rid: RID, lsn: int | None) -> None:
         """Hapus baris jika ada."""
         self._check_table(table)
         with self._lock:
             self._rows[table].pop(rid, None)
-            self._touch(rid, lsn)
+            self._touch(table, rid, lsn)
 
     def delete_all(self, table: str, lsn: int | None) -> None:
         """Kosongkan tabel."""
         self._check_table(table)
         with self._lock:
             for rid in list(self._rows[table]):
-                self._touch(rid, lsn)
+                self._touch(table, rid, lsn)
             self._rows[table].clear()
 
     def create_index(self, info: IndexInfo) -> None:
@@ -242,10 +244,90 @@ class MockStorageManager(StorageManager):
                 lsn for (_, pid), lsn in self._page_lsn.items()
                 if page_ids is None or pid in page_ids
             ]
-        if self._log_flusher is not None and lsns:
-            if not self._log_flusher(max(lsns)):
-                raise StorageError("log belum permanen, page tidak boleh ditulis")
+        if (
+            self._log_flusher is not None
+            and lsns
+            and self._log_flusher(max(lsns)) is False
+        ):
+            raise StorageError("log belum permanen, page tidak boleh ditulis")
 
     def set_log_flusher(self, fn: Callable[[int], bool]) -> None:
         """Pasang callback flush_log dari FRM."""
         self._log_flusher = fn
+
+    def attach_wal(self, frm) -> None:
+        """Hubungkan SM ke FRM lewat callback flush log."""
+        self._log_flusher = frm.flush_log_until
+
+    def undo_insert(self, table: str, rid: RID) -> None:
+        """Undo INSERT: hapus baris jika ada."""
+        self.delete(table, rid, None)
+
+    def undo_update(self, table: str, rid: RID, before) -> None:
+        """Undo UPDATE: tulis before-image."""
+        with self._lock:
+            if rid in self._rows[table]:
+                self._rows[table][rid] = list(before)
+            else:
+                self._rows[table][rid] = list(before)
+
+    def undo_delete(self, table: str, rid: RID, before) -> None:
+        """Undo DELETE: sisipkan before-image jika belum ada."""
+        with self._lock:
+            if rid not in self._rows[table]:
+                self._rows[table][rid] = list(before)
+
+    def redo_insert(self, table: str, rid: RID, after) -> None:
+        """Redo INSERT: tulis after-image."""
+        with self._lock:
+            self._rows[table][rid] = list(after)
+
+    def redo_update(self, table: str, rid: RID, after) -> None:
+        """Redo UPDATE: tulis after-image."""
+        with self._lock:
+            self._rows[table][rid] = list(after)
+
+    def redo_delete(self, table: str, rid: RID) -> None:
+        """Redo DELETE: hapus baris."""
+        with self._lock:
+            self._rows[table].pop(rid, None)
+
+    def flush_all(self) -> None:
+        """Tulis semua page dirty."""
+        self.flush(None)
+
+    def snapshot_to(self, path: str) -> None:
+        """Simpan snapshot isi tabel ke file JSON."""
+        with self._lock:
+            payload = {
+                table: [
+                    [rid.page_id, rid.slot, list(values)]
+                    for rid, values in rows.items()
+                ]
+                for table, rows in self._rows.items()
+            }
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+
+    def restore_from(self, path: str) -> None:
+        """Pulihkan isi tabel dari snapshot JSON."""
+        with Path(path).open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        with self._lock:
+            for table, rows in payload.items():
+                self._check_table(table)
+                self._rows[table] = {
+                    RID(int(page), int(slot)): list(values)
+                    for page, slot, values in rows
+                }
+                max_slot = max(
+                    (rid.page_id * SLOTS_PER_PAGE + rid.slot for rid in self._rows[table]),
+                    default=-1,
+                )
+                self._next_slot[table] = max_slot + 1
+
+    def rebuild_indexes(self) -> None:
+        """Tidak ada index fisik di mock."""
+        return

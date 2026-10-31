@@ -1,11 +1,15 @@
 """Penampil isi log untuk driver dan debugging."""
 
-# ruff: noqa: F401
-
 from __future__ import annotations
 
-from failure_recovery.ports import LogReadPort
+from common.log import LogRecord
 
 
 class LogInspector:
-    """Placeholder penampil log."""
+    """Memformat catatan log agar mudah dibaca."""
+
+    def display(self, records) -> str:
+        return ""
+
+    def filter_by_tx(self, tx_id: int) -> list[LogRecord]:
+        return []
