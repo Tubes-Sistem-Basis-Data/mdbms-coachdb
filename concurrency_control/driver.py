@@ -21,7 +21,8 @@ if TYPE_CHECKING:
 class Scenario:
     # expected isinya respons pertama tiap R/W sesuai urutan input
     # BEGIN/COMMIT/ABORT pakai hasil facade masing-masing, bukan AccessStatus
-    # Bentuk Schedule/Operation sama mapping item nanti cocokin lagi sama cc4
+    # Operation ikut cc4: Operation(tx_id: int, action: Action, resource: ResourceId)
+    # Mapping parser: "T1 R(A)" -> Operation(1, Action.READ, ResourceId("A")), W -> Action.WRITE
 
     name: str
     protocol: ProtocolType
@@ -34,6 +35,7 @@ class ScenarioResult:
     # Ini hasil skenario yang beneran jalan, jadi jangan isi dummy terus dianggap lulus
     # statuses catat respons pertama tiap R/W termasuk WAIT. retry ga dihitung jadi input baru
     # Yang akhirnya diizinin dan dieksekusi masuk final_schedule buat dicek cc4
+    # final_schedule dicatat driver sendiri (bukan ccm.schedule) biar tetep jalan pakai mock ccm
 
     statuses: list[AccessStatus]
     final_schedule: Schedule
@@ -73,7 +75,8 @@ class CCMDriver:
         # Pakai begin_transaction, validate_object, commit, abort, sama set_protocol dari facade repo
         # Kalau WAIT, ulang request yang sama pakai jeda common.config.WAIT_RETRY_SECONDS. ga pakai wait(tx)
         # WRITE harus bawa DataChange, dapet izin aja belum berarti datanya udah berubah
-        # Catat yang beneran dieksekusi terus cek serializability lewat checker cc4
+        # Kalau dapet ABORTED, facade udah abort sendiri. jangan panggil abort lagi, stop thread tx itu
+        # Catat yang beneran dieksekusi ke final_schedule terus cek serializability lewat checker cc4
         # Jangan return passed=True sebelum skenario jalan dan hasilnya dicek
         raise NotImplementedError
 
