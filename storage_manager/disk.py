@@ -57,7 +57,7 @@ class DiskManager:
         @return None
         @todo implement
         """
-        raise NotImplementedError
+        return None
 
     def read_page(self, table: str, page_id: int) -> bytearray:
         """
@@ -69,7 +69,7 @@ class DiskManager:
         @return bytearray yang merupakan data bytes mentah dari isi page
         @todo implement
         """
-        raise NotImplementedError
+        return bytearray()
 
 
     def write_page(self, table: str, page_id: int, data: bytes) -> None:
@@ -83,7 +83,7 @@ class DiskManager:
         @return None
         @todo implement
         """
-        raise NotImplementedError
+        return None
 
 
     def allocate_page(self, table: str, data: bytes) -> int:
@@ -96,7 +96,7 @@ class DiskManager:
         @return int yang berupa page_id milik page baru
         @todo implement
         """
-        raise NotImplementedError
+        return 0
 
 
     def num_pages(self, table: str) -> int:
@@ -108,7 +108,7 @@ class DiskManager:
         @return int berupa jumlah page pada tabel tersebut
         @todo implement
         """
-        raise NotImplementedError
+        return 0
 
 
     def sync(self, table: Optional[str] = None) -> None:
@@ -120,7 +120,7 @@ class DiskManager:
         @return None
         @todo implement
         """
-        raise NotImplementedError
+        return None
 
 
     def close(self) -> None:
@@ -130,4 +130,4 @@ class DiskManager:
         @return None
         @todo implement
         """
-        raise NotImplementedError
+        return None

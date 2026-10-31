@@ -14,16 +14,16 @@ class StatisticsManager:
         self._cache: dict[str, TableStats] = {}
 
     def get_stats(self, table: str) -> TableStats:
-        raise NotImplementedError
+        return TableStats(table=table, n_r=0, b_r=0, l_r=0.0, f_r=0, distinct={})
 
     def on_insert(self, table: str) -> None:
-        raise NotImplementedError
+        return None
 
     def on_delete(self, table: str) -> None:
-        raise NotImplementedError
+        return None
 
     def invalidate(self, table: str) -> None:
-        raise NotImplementedError
+        return None
 
     def recount(self, table: str) -> None:
-        raise NotImplementedError
+        return None

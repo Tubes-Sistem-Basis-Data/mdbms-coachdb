@@ -108,7 +108,7 @@ class SlottedPage:
         @return bytearray yang merepresentasikan sebuah page kosong
         @todo implement
         """
-        raise NotImplementedError
+        return bytearray()
 
     @staticmethod
     def read_header(buf: bytearray) -> PageHeader:
@@ -120,7 +120,7 @@ class SlottedPage:
         @return PageHeader berupa header valid dari page tersebut
         @todo implement
         """
-        raise NotImplementedError
+        return PageHeader(page_id=0, page_lsn=0, slot_count=0, record_size=0, checksum=0)
 
     @staticmethod
     def set_page_lsn(buf: bytearray, lsn: LSN) -> None:
@@ -133,7 +133,7 @@ class SlottedPage:
         @return None
         @todo implement
         """
-        raise NotImplementedError
+        return None
 
 
     @staticmethod
@@ -143,7 +143,7 @@ class SlottedPage:
 
         @return int berupa offset dalam byte
         """
-        raise NotImplementedError
+        return 0
 
     @staticmethod
     def _compute_checksum(buf: bytearray) -> int:
@@ -153,7 +153,7 @@ class SlottedPage:
         @param buf (bytearray) buffer dari page yang dituju.
         @return int berupa nilai CRC-32 
         """
-        raise NotImplementedError
+        return 0
 
     @staticmethod
     def seal(buf: bytearray) -> None:
@@ -165,7 +165,7 @@ class SlottedPage:
         @return None
         @todo implement
         """
-        raise NotImplementedError
+        return None
 
     @staticmethod
     def verify(buf: bytearray) -> bool:
@@ -177,7 +177,7 @@ class SlottedPage:
         @return bool berupa validitas checksum
         @todo implement
         """
-        raise NotImplementedError
+        return False
 
 
     @staticmethod
@@ -191,7 +191,7 @@ class SlottedPage:
         @return int berupa jumlah offset byte dari awal buffer untuk slot tersebut
         @todo implement
         """
-        raise NotImplementedError
+        return 0
 
 
     @staticmethod
@@ -205,7 +205,7 @@ class SlottedPage:
         @return SlotStatus berupa status dari slot tersebut
         @todo implement
         """
-        raise NotImplementedError
+        return SlotStatus.EMPTY
 
     @staticmethod
     def read_slot(buf: bytearray, slot: int) -> Optional[bytes]:
@@ -218,7 +218,7 @@ class SlottedPage:
         @return bytes berupa data pada slot dari page tersebut jika bersifat LIVE, selain itu None
         @todo implement
         """
-        raise NotImplementedError
+        return None
 
     @staticmethod
     def write_slot(buf: bytearray, slot: int, data: bytes) -> None:
@@ -232,7 +232,7 @@ class SlottedPage:
         @return None
         @todo implement
         """
-        raise NotImplementedError
+        return None
 
     @staticmethod
     def mark_tombstone(buf: bytearray, slot: int) -> None:
@@ -242,7 +242,7 @@ class SlottedPage:
         @param buf (bytearray) buffer dari page
         @param slot (int) indeks slot
         """
-        raise NotImplementedError
+        return None
 
     @staticmethod
     def first_never_used_slot(buf: bytearray) -> Optional[int]:
@@ -254,7 +254,7 @@ class SlottedPage:
         @return int berupa indeks slot EMPTY berikutnya, atau None jika page penuh
         @todo implement
         """
-        raise NotImplementedError
+        return None
 
     @staticmethod
     def capacity(record_size: int) -> int:
@@ -266,4 +266,4 @@ class SlottedPage:
         @return int berupa jumlah slot yang dapat dimuat oleh satu page
         @todo implement
         """
-        raise NotImplementedError
+        return 0

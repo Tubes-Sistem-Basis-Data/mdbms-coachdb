@@ -12,10 +12,10 @@ class Catalog:
         self._indexes: dict[str, IndexInfo] = {}
 
     def list_tables(self) -> list[str]:
-        raise NotImplementedError
+        return []
 
     def get_table_schema(self, table: str) -> TableSchema:
-        raise NotImplementedError
+        return TableSchema(name="", columns=[])
 
     def create_table(
         self,
@@ -24,19 +24,19 @@ class Catalog:
         primary_key: tuple[str, ...],
         foreign_keys: tuple[ForeignKey, ...],
     ) -> TableSchema:
-        raise NotImplementedError
+        return TableSchema(name=name, columns=list(columns), primary_key=list(primary_key), foreign_keys=list(foreign_keys))
 
     def register_index(self, info: IndexInfo) -> None:
-        raise NotImplementedError
+        return None
 
     def unregister_index(self, name: str) -> None:
-        raise NotImplementedError
+        return None
 
     def list_indexes(self, table: Optional[str] = None) -> list[IndexInfo]:
-        raise NotImplementedError
+        return []
 
     def _load(self) -> None:
-        raise NotImplementedError
+        return None
 
     def _persist(self) -> None:
-        raise NotImplementedError
+        return None

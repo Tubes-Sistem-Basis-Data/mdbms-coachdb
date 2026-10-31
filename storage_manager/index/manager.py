@@ -49,24 +49,24 @@ class IndexManager:
     def create_index(
         self, name: str, table: str, column: str, kind: IndexKind
     ) -> IndexInfo:
-        raise NotImplementedError
+        return IndexInfo(name=name, table=table, column=column, kind=kind)
 
     def lookup(self, name: str, key: Value) -> list[RID]:
-        raise NotImplementedError
+        return []
 
     def range(
         self, name: str, low: Optional[Value], high: Optional[Value]
     ) -> list[RID]:
-        raise NotImplementedError
+        return []
 
     def height(self, name: str) -> int:
-        raise NotImplementedError
+        return 0
 
     def on_insert(self, table: str, values: tuple[Value, ...], rid: RID) -> None:
-        raise NotImplementedError
+        return None
 
     def on_delete(self, table: str, values: tuple[Value, ...], rid: RID) -> None:
-        raise NotImplementedError
+        return None
 
     def on_update(
         self,
@@ -75,7 +75,7 @@ class IndexManager:
         new: tuple[Value, ...],
         rid: RID,
     ) -> None:
-        raise NotImplementedError
+        return None
 
     def rebuild_all(self) -> None:
-        raise NotImplementedError
+        return None

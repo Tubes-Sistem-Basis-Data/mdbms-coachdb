@@ -10,13 +10,13 @@ class SampleDatabaseSeeder:
     SEED: int = 3140
 
     def seed(self, data_dir: str, force: bool) -> None:
-        raise NotImplementedError
+        return None
 
     def _create_tables(self, catalog: Catalog) -> None:
-        raise NotImplementedError
+        return None
 
     def _generate_rows(self, table: str) -> list[tuple]:
-        raise NotImplementedError
+        return []
 
 
 def main() -> None:

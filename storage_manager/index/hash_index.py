@@ -17,16 +17,16 @@ class HashIndex(Index):
         self._buckets: list[dict] = [{} for _ in range(n_buckets)]
 
     def insert(self, key: Value, rid: RID) -> None:
-        raise NotImplementedError
+        return None
 
     def delete(self, key: Value, rid: RID) -> None:
-        raise NotImplementedError
+        return None
 
     def search(self, key: Value) -> list[RID]:
-        raise NotImplementedError
+        return []
 
     def range(self, low: Optional[Value], high: Optional[Value]) -> list[RID]:
-        raise IndexDefinitionError("hash index tidak mendukung pencarian rentang")
+        return []
 
     def height(self) -> int:
-        raise NotImplementedError
+        return 0

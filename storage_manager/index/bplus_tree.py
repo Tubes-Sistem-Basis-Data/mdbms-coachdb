@@ -36,16 +36,16 @@ class BPlusTree(Index):
         self._root: BPlusNode = LeafNode()
 
     def insert(self, key: Value, rid: RID) -> None:
-        raise NotImplementedError
+        return None
 
     def delete(self, key: Value, rid: RID) -> None:
-        raise NotImplementedError
+        return None
 
     def search(self, key: Value) -> list[RID]:
-        raise NotImplementedError
+        return []
 
     def range(self, low: Optional[Value], high: Optional[Value]) -> list[RID]:
-        raise NotImplementedError
+        return []
 
     def height(self) -> int:
-        raise NotImplementedError
+        return 0
