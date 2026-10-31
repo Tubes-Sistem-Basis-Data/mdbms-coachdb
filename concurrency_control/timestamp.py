@@ -19,16 +19,16 @@ class TimestampProtocol(ConcurrencyProtocol):
         pass
 
     def request(self, tx: Transaction, resource: ResourceId, action: Action,) -> AccessResponse:
-        ...
+        raise NotImplementedError
 
     def on_write_logged(self, tx: Transaction, op: str, table: str, rid: ResourceId,) -> None:
-        ...
+        raise NotImplementedError
 
     def release(self, tx: Transaction) -> list[Transaction]:
-        ...
+        raise NotImplementedError
 
     def cancel_wait(self, tx: Transaction) -> None:
-        ...
+        raise NotImplementedError
 
     def on_finish(self, tx_id: int) -> None:
-        ...
+        raise NotImplementedError
