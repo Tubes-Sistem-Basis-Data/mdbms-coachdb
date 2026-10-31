@@ -4,7 +4,7 @@ from common.interfaces.concurrency_control import ConcurrencyControlManager
 from common.interfaces.failure_recovery import FailureRecoveryManager
 from common.interfaces.query_optimizer import QueryOptimizer
 from common.interfaces.query_processor import QueryProcessor, Session
-from common.interfaces.storage_manager import StorageManager, StorageManagerAPI
+from common.interfaces.storage_manager import StorageManager
 
 __all__ = [
     "ConcurrencyControlManager",
@@ -13,5 +13,4 @@ __all__ = [
     "QueryProcessor",
     "Session",
     "StorageManager",
-    "StorageManagerAPI",
 ]

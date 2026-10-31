@@ -6,7 +6,8 @@ RecordCodec menggabungkan dua fitur:
 
 from __future__ import annotations
 
-from common.types import ColumnSchema, TableSchema, Value
+from common.catalog import ColumnSchema, TableSchema
+from storage_manager.types import Value
 
 
 class RecordCodec: # Encode/decode nilai dan record

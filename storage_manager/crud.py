@@ -5,7 +5,8 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING, Callable, Iterator, Optional
 
-from common.types import LSN, RID, Row, Value
+from common.storage import RID, Row
+from storage_manager.types import LSN, Value
 
 if TYPE_CHECKING:
     from storage_manager.buffer import BufferPool, Frame

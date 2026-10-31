@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from common.errors import IndexDefinitionError
-from common.types import RID, Value
+from common.storage import RID
+from storage_manager.errors import IndexDefinitionError
+from storage_manager.types import Value
 from storage_manager.index.manager import Index
 
 DEFAULT_BUCKETS = 64

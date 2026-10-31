@@ -6,6 +6,7 @@ import logging
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
+from typing import Callable
 
 from common import config
 from common.errors import StorageError
@@ -47,14 +48,14 @@ class BufferPool:
             raise StorageError(f"kapasitas buffer tidak valid: {capacity}")
         self._disk = disk
         self._capacity = capacity
-        self._frm = None
+        self._log_flusher: Callable[[int], bool] | None = None
         self._frames: OrderedDict[tuple[str, int], Frame] = OrderedDict()
         self._lock = threading.RLock()
         logger.debug("buffer pool dibuat dengan %d frame", capacity)
 
-    def set_wal(self, frm) -> None:
-        """Sambungkan buffer pool ke FRM buat flush log (K6)."""
-        self._frm = frm
+    def set_log_flusher(self, fn: Callable[[int], bool]) -> None:
+        """Pasang callback flush log dari FRM (K6). SM tidak memegang objek FRM."""
+        self._log_flusher = fn
         logger.debug("buffer pool terhubung ke WAL")
 
     def get_page(self, table: str, page_id: int) -> Frame:
@@ -171,6 +172,7 @@ class BufferPool:
 
     def _flush_log_until(self, page_lsn: int) -> None:
         """Minta FRM pastikan log sampai page_lsn udah aman."""
-        if self._frm is None:
+        if self._log_flusher is None:
             return
-        self._frm.flush_log_until(page_lsn)
+        if not self._log_flusher(page_lsn):
+            raise StorageError(f"log sampai LSN {page_lsn} belum permanen")

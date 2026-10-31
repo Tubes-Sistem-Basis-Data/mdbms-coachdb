@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from common.types import ColumnSchema, ForeignKey, IndexInfo, TableSchema
+from common.catalog import ColumnSchema, ForeignKey, IndexInfo, TableSchema
 
 
 class Catalog:

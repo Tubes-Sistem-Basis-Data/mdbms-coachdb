@@ -3,7 +3,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Callable, Iterator, Optional
 
-from common.types import RID, IndexInfo, IndexKind, Row, Value
+from common.catalog import IndexInfo, IndexKind
+from common.storage import RID, Row
+from storage_manager.types import Value
 
 if TYPE_CHECKING:
     from storage_manager.catalog import Catalog

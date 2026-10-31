@@ -1,6 +1,4 @@
-import inspect
-
-import pytest
+import unittest
 
 from storage_manager.index import (
     BPlusNode,
@@ -18,36 +16,40 @@ MANAGER_METHODS = [
 ]
 
 
-def test_index_is_abstract():
-    with pytest.raises(TypeError):
-        Index("t", "c") 
+class TestBPlusTree(unittest.TestCase):
+    def test_index_is_abstract(self):
+        with self.assertRaises(TypeError):
+            Index("t", "c")
+
+    def test_bplustree_has_index_methods(self):
+        for name in INDEX_METHODS:
+            with self.subTest(name=name):
+                self.assertTrue(callable(getattr(BPlusTree, name)))
+
+    def test_index_manager_has_methods(self):
+        for name in MANAGER_METHODS:
+            with self.subTest(name=name):
+                self.assertTrue(callable(getattr(IndexManager, name)))
+
+    def test_bplustree_attributes(self):
+        tree = BPlusTree("student", "id", order=4)
+        self.assertEqual(tree.table, "student")
+        self.assertEqual(tree.column, "id")
+        self.assertEqual(tree._order, 4)
+        self.assertIsInstance(tree._root, LeafNode)
+
+    def test_node_hierarchy(self):
+        self.assertTrue(issubclass(InternalNode, BPlusNode))
+        self.assertTrue(issubclass(LeafNode, BPlusNode))
+        leaf = LeafNode()
+        self.assertEqual(leaf.keys, [])
+        self.assertEqual(leaf.values, [])
+        self.assertIsNone(leaf.next)
+        self.assertEqual(InternalNode().children, [])
+
+    def test_default_returns(self):
+        self.assertEqual(BPlusTree("t", "c").search(1), [])
 
 
-@pytest.mark.parametrize("name", INDEX_METHODS)
-def test_bplustree_has_index_methods(name):
-    assert callable(getattr(BPlusTree, name))
-
-
-@pytest.mark.parametrize("name", MANAGER_METHODS)
-def test_index_manager_has_methods(name):
-    assert callable(getattr(IndexManager, name))
-
-
-def test_bplustree_attributes():
-    tree = BPlusTree("student", "id", order=4)
-    assert tree.table == "student"
-    assert tree.column == "id"
-    assert tree._order == 4
-    assert isinstance(tree._root, LeafNode)
-
-
-def test_node_hierarchy():
-    assert issubclass(InternalNode, BPlusNode)
-    assert issubclass(LeafNode, BPlusNode)
-    leaf = LeafNode()
-    assert leaf.keys == [] and leaf.values == [] and leaf.next is None
-    assert InternalNode().children == []
-
-
-def test_default_returns():
-    assert BPlusTree("t", "c").search(1) == []
+if __name__ == "__main__":
+    unittest.main()

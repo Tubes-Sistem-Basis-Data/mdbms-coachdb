@@ -11,7 +11,7 @@ from common.errors import StorageError
 from storage_manager.buffer import BufferPool, Frame
 
 EXPECTED_SIGNATURES = {
-    "set_wal": ["self", "frm"],
+    "set_log_flusher": ["self", "fn"],
     "get_page": ["self", "table", "page_id"],
     "new_page": ["self", "table", "record_size"],
     "unpin": ["self", "frame", "dirty", "lsn"],
@@ -90,9 +90,10 @@ class FakeWal:
         self.flushed: list[int] = []
         self.events = events if events is not None else []
 
-    def flush_log_until(self, page_lsn: int) -> None:
+    def flush_log(self, page_lsn: int) -> bool:
         self.flushed.append(page_lsn)
         self.events.append("wal")
+        return True
 
 
 class FailingWal:
@@ -101,7 +102,7 @@ class FailingWal:
     def __init__(self) -> None:
         self.flushed: list[int] = []
 
-    def flush_log_until(self, page_lsn: int) -> None:
+    def flush_log(self, page_lsn: int) -> bool:
         self.flushed.append(page_lsn)
         raise StorageError("log belum permanen")
 
@@ -149,7 +150,7 @@ class TestBufferPoolDasar(unittest.TestCase):
         pool = BufferPool(FakeDisk())
         self.assertEqual(pool._capacity, config.BUFFER_FRAMES)
         self.assertEqual(len(pool._frames), 0)
-        self.assertIsNone(pool._frm)
+        self.assertIsNone(pool._log_flusher)
 
     def test_kapasitas_khusus(self):
         pool = BufferPool(FakeDisk(), capacity=3)
@@ -337,7 +338,7 @@ class TestFlush(PoolTestCase):
     def test_urutan_wal_seal_tulis(self):
         self.pool = BufferPool(self.disk, capacity=1)
         wal = FakeWal(self.disk.events)
-        self.pool.set_wal(wal)
+        self.pool.set_log_flusher(wal.flush_log)
         self.simpan_page("student", 0)
         self.simpan_page("student", 1)
         frame = self.pool.get_page("student", 0)
@@ -348,7 +349,7 @@ class TestFlush(PoolTestCase):
 
     def test_gagal_flush_log_membatalkan_tulis(self):
         self.pool = BufferPool(self.disk, capacity=1)
-        self.pool.set_wal(FailingWal())
+        self.pool.set_log_flusher(FailingWal().flush_log)
         self.simpan_page("student", 0)
         self.simpan_page("student", 1)
         frame = self.pool.get_page("student", 0)
@@ -402,7 +403,7 @@ class TestFlush(PoolTestCase):
         self.assertEqual(self.disk.syncs, [])
 
     def test_gagal_flush_log_saat_flush_page(self):
-        self.pool.set_wal(FailingWal())
+        self.pool.set_log_flusher(FailingWal().flush_log)
         self.simpan_page("student", 0)
         frame = self.pool.get_page("student", 0)
         self.pool.unpin(frame, True, 3)
@@ -429,23 +430,23 @@ class TestDiscardTable(PoolTestCase):
 
 
 class TestWalHook(PoolTestCase):
-    def test_set_wal_menyimpan_referensi(self):
+    def test_set_log_flusher_menyimpan_callback(self):
         wal = FakeWal()
-        self.pool.set_wal(wal)
-        self.assertIs(self.pool._frm, wal)
+        self.pool.set_log_flusher(wal.flush_log)
+        self.assertEqual(self.pool._log_flusher, wal.flush_log)
 
     def test_tanpa_wal_tidak_melempar_error(self):
         self.pool._flush_log_until(7)
 
     def test_flush_log_until_diteruskan_ke_frm(self):
         wal = FakeWal()
-        self.pool.set_wal(wal)
+        self.pool.set_log_flusher(wal.flush_log)
         self.pool._flush_log_until(11)
         self.pool._flush_log_until(12)
         self.assertEqual(wal.flushed, [11, 12])
 
     def test_kegagalan_wal_tidak_ditelan(self):
-        self.pool.set_wal(FailingWal())
+        self.pool.set_log_flusher(FailingWal().flush_log)
         with self.assertRaises(StorageError):
             self.pool._flush_log_until(5)
 

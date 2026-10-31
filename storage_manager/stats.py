@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Callable, Iterator
 
-from common.types import Row, TableStats
+from common.catalog import TableStats
+from common.storage import Row
 from storage_manager.catalog import Catalog
 
 
