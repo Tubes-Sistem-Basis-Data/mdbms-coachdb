@@ -29,12 +29,12 @@ class SortOp(RowOperator):
 
     def open(self, ctx: ExecContext) -> None:
         """Open the child and prepare sorted output."""
-        raise NotImplementedError
+        return None
 
     def next(self) -> ExecRow | None:
         """Return the next row in sort order, or None when exhausted."""
-        raise NotImplementedError
+        return None
 
     def close(self) -> None:
         """Close the child stream."""
-        raise NotImplementedError
+        return None

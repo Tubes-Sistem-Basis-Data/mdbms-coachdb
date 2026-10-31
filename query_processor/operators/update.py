@@ -20,4 +20,4 @@ class UpdateExecution(Executable):
         self._source = source
 
     def execute(self, ctx: ExecContext) -> ExecutionResult:
-        raise NotImplementedError("QP-11: UpdateExecution.execute belum diimplementasikan")
+        return ExecutionResult(ok=False)

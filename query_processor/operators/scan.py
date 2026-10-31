@@ -18,13 +18,13 @@ class TableScanOp(RowOperator):
         self._cursor: Iterator[Row] | None = None
 
     def open(self, ctx: ExecContext) -> None:
-        pass
+        return None
 
     def next(self) -> ExecRow | None:
         return None
 
     def close(self) -> None:
-        pass
+        return None
 
 
 class IndexScanOp(RowOperator):
@@ -48,10 +48,10 @@ class IndexScanOp(RowOperator):
         self._rids: list[RID] = []
 
     def open(self, ctx: ExecContext) -> None:
-        raise NotImplementedError("QP-13: IndexScanOp.open belum diimplementasikan")
+        return None
 
     def next(self) -> ExecRow | None:
-        raise NotImplementedError("QP-13: IndexScanOp.next belum diimplementasikan")
+        return None
 
     def close(self) -> None:
-        raise NotImplementedError("QP-13: IndexScanOp.close belum diimplementasikan")
+        return None

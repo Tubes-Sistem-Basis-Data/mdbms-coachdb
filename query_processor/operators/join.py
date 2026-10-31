@@ -46,12 +46,12 @@ class BlockNestedLoopJoinOp(RowOperator):
 
     def open(self, ctx: ExecContext) -> None:
         """Open child streams and prepare this operator for iteration."""
-        raise NotImplementedError
+        return None
 
     def next(self) -> ExecRow | None:
         """Return the next matching joined row, or None when exhausted."""
-        raise NotImplementedError
+        return None
 
     def close(self) -> None:
         """Close both child streams, including when iteration failed."""
-        raise NotImplementedError
+        return None

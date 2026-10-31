@@ -17,10 +17,10 @@ class FilterOp(RowOperator):
         self.schema = child.schema
 
     def open(self, ctx: ExecContext) -> None:
-        pass
+        return None
 
     def next(self) -> ExecRow | None:
         return None
 
     def close(self) -> None:
-        pass
+        return None

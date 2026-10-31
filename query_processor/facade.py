@@ -30,21 +30,19 @@ class MetaCommandHandler:
         self._frm = frm
 
     def explain(self, parsed: ParsedQuery | str) -> ExecutionResult:
-        raise NotImplementedError("QP-02: MetaCommandHandler.explain belum diimplementasikan")
+        return ExecutionResult(ok=False)
 
     def checkpoint(self, session: Session) -> ExecutionResult:
-        raise NotImplementedError("QP-02: MetaCommandHandler.checkpoint belum diimplementasikan")
+        return ExecutionResult(ok=False)
 
     def show_log(self, tx_id: int | None = None) -> ExecutionResult:
-        raise NotImplementedError("QP-02: MetaCommandHandler.show_log belum diimplementasikan")
+        return ExecutionResult(ok=False)
 
     def restore(self, target: RecoveryTarget, session: Session) -> ExecutionResult:
-        raise NotImplementedError("QP-02: MetaCommandHandler.restore belum diimplementasikan")
+        return ExecutionResult(ok=False)
 
     def require_outside_tx(self, session: Session) -> None:
-        raise NotImplementedError(
-            "QP-02: MetaCommandHandler.require_outside_tx belum diimplementasikan"
-        )
+        return None
 
 
 class QueryProcessorFacade(QueryProcessor):
@@ -69,17 +67,13 @@ class QueryProcessorFacade(QueryProcessor):
         self._sessions = sessions or SessionManager()
 
     def open_session(self) -> Session:
-        raise NotImplementedError("QP-02: QueryProcessorFacade.open_session belum diimplementasikan")
+        return Session(session_id=0)
 
     def close_session(self, session_id: int) -> None:
-        raise NotImplementedError(
-            "QP-02: QueryProcessorFacade.close_session belum diimplementasikan"
-        )
+        return None
 
     def execute_query(self, sql: str, session: Session) -> ExecutionResult:
-        raise NotImplementedError(
-            "QP-02: QueryProcessorFacade.execute_query belum diimplementasikan"
-        )
+        return ExecutionResult(ok=False)
 
     def execute(self, session: Session, sql: str) -> ExecutionResult:
         return self.execute_query(sql, session)

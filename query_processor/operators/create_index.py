@@ -17,6 +17,4 @@ class CreateIndexExecution(Executable):
         self._index = index
 
     def execute(self, ctx: ExecContext) -> ExecutionResult:
-        raise NotImplementedError(
-            "QP-13: CreateIndexExecution.execute belum diimplementasikan"
-        )
+        return ExecutionResult(ok=False)

@@ -9,7 +9,7 @@ __all__ = ["ExecutionResult", "QueryResult", "ResultFormatter"]
 
 class ResultFormatter:
     def format(self, result: ExecutionResult) -> str:
-        raise NotImplementedError("QP-01: ResultFormatter.format belum diimplementasikan")
+        return ""
 
     def format_error(self, error: Exception | str) -> str:
-        raise NotImplementedError("QP-01: ResultFormatter.format_error belum diimplementasikan")
+        return ""

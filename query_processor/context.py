@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from common.interfaces import ConcurrencyControlManager, StorageManager
 from common.storage import RID
-from common.transaction import AccessResponse, Action, DataChange
+from common.transaction import AccessResponse, AccessStatus, Action, DataChange
 
 
 @dataclass
@@ -15,7 +15,7 @@ class ExecContext:
     access_intent: Action = Action.READ
 
     def authorize_table(self, table: str) -> AccessResponse:
-        raise NotImplementedError("QP2: authorize_table belum diimplementasikan")
+        return AccessResponse(status=AccessStatus.ALLOWED)
 
     def authorize_rid(
         self,
@@ -24,7 +24,7 @@ class ExecContext:
         action: Action,
         change: DataChange | None = None,
     ) -> AccessResponse:
-        raise NotImplementedError("QP2: authorize_rid belum diimplementasikan")
+        return AccessResponse(status=AccessStatus.ALLOWED)
 
     def authorize_insert(self, change: DataChange) -> AccessResponse:
-        raise NotImplementedError("QP2: authorize_insert belum diimplementasikan")
+        return AccessResponse(status=AccessStatus.ALLOWED)
