@@ -52,7 +52,7 @@ class BufferPool:
         self._lock = threading.RLock()
         logger.debug("buffer pool dibuat dengan %d frame", capacity)
 
-    def attach_wal(self, frm) -> None:
+    def set_wal(self, frm) -> None:
         """Sambungkan buffer pool ke FRM buat flush log (K6)."""
         self._frm = frm
         logger.debug("buffer pool terhubung ke WAL")
