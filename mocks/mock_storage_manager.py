@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Callable, Iterator
 
+from common.catalog import TableSchema, TableStats
 from common.interfaces import StorageManager
 from common.storage import RID, Row
 
@@ -15,22 +16,22 @@ class MockStorageManager(StorageManager):
         self.data_dir = data_dir
 
     def list_tables(self) -> list[str]:
-        return 0
+        return []
 
-    def get_schema(self, table: str):
+    def get_schema(self, table: str) -> TableSchema:
         return None
 
-    def get_stats(self, table: str):
+    def get_stats(self, table: str) -> TableStats:
         return None
 
     def scan(self, table: str) -> Iterator[Row]:
-        return None
+        return iter(())
 
     def fetch(self, table: str, rid: RID) -> Row | None:
         return None
 
     def allocate_rid(self, table: str) -> RID:
-        return 0
+        return None
 
     def release_rid(self, rid: RID) -> None:
         return None
@@ -51,10 +52,10 @@ class MockStorageManager(StorageManager):
         return None
 
     def index_lookup(self, table: str, column: str, key) -> list[RID]:
-        return 0
+        return []
 
     def index_range(self, table: str, column: str, low, high) -> list[RID]:
-        return 0
+        return []
 
     def flush(self, page_ids: list[int] | None = None) -> None:
         return None
