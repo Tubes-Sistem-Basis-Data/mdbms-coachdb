@@ -20,14 +20,14 @@ class QueryServer:
         self._running: bool = False
 
     def serve(self) -> None:
-        raise NotImplementedError("QP-02: QueryServer.serve belum diimplementasikan")
+        return None
 
     def handle_client(
         self,
         conn: socket.socket,
         addr: tuple[str, int] | None = None,
     ) -> None:
-        raise NotImplementedError("QP-02: QueryServer.handle_client belum diimplementasikan")
+        return None
 
     def shutdown(self) -> None:
-        raise NotImplementedError("QP-02: QueryServer.shutdown belum diimplementasikan")
+        return None

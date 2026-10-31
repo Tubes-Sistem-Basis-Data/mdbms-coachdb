@@ -6,7 +6,7 @@ from query_processor.tuple import ExecRow, Value
 
 class ExpressionEvaluator:
     def eval(self, expr: Expression, row: ExecRow) -> Value | bool:
-        raise NotImplementedError("QP-04: eval belum diimplementasikan")
+        return None
 
     def eval_bool(self, expr: Expression, row: ExecRow) -> bool:
-        raise NotImplementedError("QP-04: eval_bool belum diimplementasikan")
+        return False

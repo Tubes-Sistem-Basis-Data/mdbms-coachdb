@@ -15,18 +15,18 @@ class RowOperator(ABC):
 
     @abstractmethod
     def open(self, ctx: ExecContext) -> None:
-        raise NotImplementedError
+        return None
 
     @abstractmethod
     def next(self) -> ExecRow | None:
-        raise NotImplementedError
+        return None
 
     @abstractmethod
     def close(self) -> None:
-        raise NotImplementedError
+        return None
 
 
 class Executable(ABC):
     @abstractmethod
     def execute(self, ctx: ExecContext) -> ExecutionResult:
-        raise NotImplementedError
+        return ExecutionResult(ok=False)

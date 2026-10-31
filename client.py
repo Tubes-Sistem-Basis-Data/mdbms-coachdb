@@ -13,13 +13,13 @@ class StatementSplitter:
         self._in_string: bool = False
 
     def feed(self, text: str) -> list[str]:
-        raise NotImplementedError("QP-01: StatementSplitter.feed belum diimplementasikan")
+        return []
 
     def has_pending(self) -> bool:
-        raise NotImplementedError("QP-01: StatementSplitter.has_pending belum diimplementasikan")
+        return False
 
     def reset(self) -> None:
-        raise NotImplementedError("QP-01: StatementSplitter.reset belum diimplementasikan")
+        return None
 
 
 class ClientCLI:
@@ -36,23 +36,23 @@ class ClientCLI:
         self._formatter = ResultFormatter()
 
     def connect(self) -> None:
-        raise NotImplementedError("QP-01: ClientCLI.connect belum diimplementasikan")
+        return None
 
     def close(self) -> None:
-        raise NotImplementedError("QP-01: ClientCLI.close belum diimplementasikan")
+        return None
 
     def read_statement(self) -> str | None:
-        raise NotImplementedError("QP-01: ClientCLI.read_statement belum diimplementasikan")
+        return None
 
     def send(self, sql: str) -> ExecutionResult:
-        raise NotImplementedError("QP-01: ClientCLI.send belum diimplementasikan")
+        return ExecutionResult(ok=False)
 
     def run(self) -> None:
-        raise NotImplementedError("QP-01: ClientCLI.run belum diimplementasikan")
+        return None
 
 
 def main() -> None:
-    raise NotImplementedError("QP-01: entrypoint client.py belum diimplementasikan")
+    return None
 
 
 if __name__ == "__main__":

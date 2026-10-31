@@ -21,7 +21,7 @@ class OutputSchema:
     columns: list[ColumnBinding]
 
     def index_of(self, ref: ColumnRef) -> int:
-        raise NotImplementedError("QP2: OutputSchema.index_of belum diimplementasikan")
+        return 0
 
 
 @dataclass

@@ -13,19 +13,19 @@ class TransactionCoordinator:
         self._ccm = ccm
 
     def begin(self, session: Session) -> ExecutionResult:
-        raise NotImplementedError("QP-12: TransactionCoordinator.begin belum diimplementasikan")
+        return ExecutionResult(ok=False)
 
     def commit(self, session: Session) -> ExecutionResult:
-        raise NotImplementedError("QP-12: TransactionCoordinator.commit belum diimplementasikan")
+        return ExecutionResult(ok=False)
 
     def abort(self, session: Session) -> ExecutionResult:
-        raise NotImplementedError("QP-12: TransactionCoordinator.abort belum diimplementasikan")
+        return ExecutionResult(ok=False)
 
     def run_autocommit(self, session: Session, work: Callable[[int], ExecutionResult]) -> ExecutionResult:
-        raise NotImplementedError("QP-12: TransactionCoordinator.run_autocommit belum diimplementasikan")
+        return ExecutionResult(ok=False)
 
     def abort_on_disconnect(self, session: Session) -> None:
-        raise NotImplementedError("QP-12: TransactionCoordinator.abort_on_disconnect belum diimplementasikan")
+        return None
 
     def handle_runtime_error(self, session: Session, error: Exception) -> None:
-        raise NotImplementedError("QP-12: TransactionCoordinator.handle_runtime_error belum diimplementasikan")
+        return None

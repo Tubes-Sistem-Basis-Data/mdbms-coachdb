@@ -18,4 +18,4 @@ class InsertExecution(Executable):
         self._values = values
 
     def execute(self, ctx: ExecContext) -> ExecutionResult:
-        raise NotImplementedError("QP-10: InsertExecution.execute belum diimplementasikan")
+        return ExecutionResult(ok=False)

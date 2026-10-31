@@ -14,13 +14,13 @@ class SessionManager:
         self._lock = threading.Lock()
 
     def open_session(self) -> Session:
-        raise NotImplementedError("QP1: SessionManager.open_session belum diimplementasikan")
+        return Session(session_id=0)
 
     def get_session(self, session_id: int) -> Session | None:
-        raise NotImplementedError("QP1: SessionManager.get_session belum diimplementasikan")
+        return None
 
     def close_session(self, session_id: int) -> Session | None:
-        raise NotImplementedError("QP1: SessionManager.close_session belum diimplementasikan")
+        return None
 
     def active_sessions(self) -> list[Session]:
-        raise NotImplementedError("QP1: SessionManager.active_sessions belum diimplementasikan")
+        return []

@@ -17,13 +17,13 @@ class ProjectOp(RowOperator):
         self.schema = OutputSchema([])
 
     def open(self, ctx: ExecContext) -> None:
-        pass
+        return None
 
     def next(self) -> ExecRow | None:
         return None
 
     def close(self) -> None:
-        pass
+        return None
 
 
 class SelectExecution(Executable):
