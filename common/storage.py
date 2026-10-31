@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class RID:
-    """Record id: (tabel, page, slot). Hashable, dipakai sebagai kunci lock dan index."""
+    """Record id: (page, slot). Hashable, dipakai sebagai kunci lock dan index."""
 
     table: str
     page_id: int

@@ -3,42 +3,51 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 
-from common.transaction import DataChange
+from common.storage import RID
+from common.transaction import RECORD_ABSENT, _NoRecord
 
 
 class LogKind(Enum):
     """Jenis catatan log."""
 
     BEGIN = "BEGIN"
-    DATA = "DATA"
     COMMIT = "COMMIT"
     ABORT_REQUEST = "ABORT_REQUEST"
-    ABORT = "ABORT"
+    ABORT_END = "ABORT_END"
+    INSERT = "INSERT"
+    UPDATE = "UPDATE"
+    DELETE = "DELETE"
+    CLR = "CLR"
     CHECKPOINT_BEGIN = "CHECKPOINT_BEGIN"
     CHECKPOINT_END = "CHECKPOINT_END"
+    RESTORE = "RESTORE"
 
 
+# @dataclass(kw_only=True) nanti ubah jadi ini
 @dataclass
 class LogRecord:
-    """Satu catatan log. `lsn` dan `timestamp` diisi FRM saat `write_log`."""
+    """Satu catatan log. `lsn` dan `timestamp` diisi FRM saat append."""
 
-    kind: LogKind
-    tx_id: int | None = None
-    change: DataChange | None = None
-    active_tx: list[int] = field(default_factory=list)
-    lsn: int = -1
-    timestamp: float = 0.0
+    lsn: int | None = -1
+    prev_lsn: int | None = -1
+    tx_id: int | None = -1
+    kind: LogKind | None = LogKind.BEGIN
+    table: str | None = ""
+    rid: RID | None = field(default_factory=lambda: RID("", 0, 0))
+    before: tuple | _NoRecord | None = RECORD_ABSENT
+    after: tuple | _NoRecord | None = RECORD_ABSENT
+    timestamp: datetime | None = field(default_factory=datetime.now)
 
 
 @dataclass
-class LogResult:
-    """Hasil write_log."""
+class RecoveryTarget:
+    """Target point-in-time recovery."""
 
-    ok: bool
-    lsn: int | None = None
-    message: str = ""
+    timestamp: datetime | None = None
+    tx_id: int | None = None
 
 
 @dataclass
@@ -51,22 +60,8 @@ class CheckpointResult:
 
 
 @dataclass
-class RecoveryTarget:
-    """Target point-in-time recovery. Tepat satu field harus terisi."""
-
-    timestamp: float | None = None
-    tx_id: int | None = None
-
-    def __post_init__(self) -> None:
-        if (self.timestamp is None) == (self.tx_id is None):
-            raise ValueError("RecoveryTarget: isi tepat satu dari timestamp atau tx_id")
-
-
-@dataclass
-class RecoveryResult:
-    """Hasil `recover` / `recover_to`. `last_tx_id` dipakai `CCM.initialize`."""
+class RestoreResult:
+    """Hasil pemulihan ke waktu atau transaksi tertentu."""
 
     ok: bool
-    last_tx_id: int = 0
-    last_lsn: int = 0
     message: str = ""

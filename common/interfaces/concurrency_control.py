@@ -62,3 +62,14 @@ class ConcurrencyControlManager(ABC):
     @abstractmethod
     def resume_transactions(self) -> None:
         """Izinkan lagi transaksi baru."""
+
+    """ Nanti request buat FRM 
+    @abstractmethod
+    def hold_new_transactions(self) -> None:
+
+    @abstractmethod
+    def wait_until_no_active(self, timeout: float) -> None:
+
+    @abstractmethod
+    def release_hold(self) -> None:
+    """
