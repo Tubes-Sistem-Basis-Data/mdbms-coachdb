@@ -14,7 +14,7 @@ class SMDriver:
         return None
 
     def run_scenario(self, name: str) -> bool:
-        return 0
+        return False
 
     def print_summary(self) -> None:
         return None
