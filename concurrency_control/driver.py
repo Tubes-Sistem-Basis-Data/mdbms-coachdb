@@ -8,12 +8,14 @@ from typing import TYPE_CHECKING
 
 from common.interfaces.concurrency_control import ConcurrencyControlManager
 from common.transaction import AccessStatus, ProtocolType
+from concurrency_control.serializability import (
+    Schedule,
+    SerializabilityResult,
+)
 
 if TYPE_CHECKING:
     from concurrency_control.serializability import (
-        Schedule,
         SerializabilityChecker,
-        SerializabilityResult,
     )
 
 
@@ -49,11 +51,11 @@ class ScheduleParser:
 
     def parse(self, path: str) -> list[Scenario]:
         # Baca file schedule terus kirim isinya ke parse_text
-        raise NotImplementedError
+        return []
 
     def parse_text(self, text: str) -> list[Scenario]:
         # Parse metadata, operasi per baris, komentar #, sama expected statusnya
-        raise NotImplementedError
+        return []
 
 
 class CCMDriver:
@@ -78,8 +80,13 @@ class CCMDriver:
         # Kalau dapet ABORTED, facade udah abort sendiri. jangan panggil abort lagi, stop thread tx itu
         # Catat yang beneran dieksekusi ke final_schedule terus cek serializability lewat checker cc4
         # Jangan return passed=True sebelum skenario jalan dan hasilnya dicek
-        raise NotImplementedError
+        return ScenarioResult(
+            statuses=[],
+            final_schedule=Schedule(),
+            verdict=SerializabilityResult(serializable=False, serial_order=[]),
+            passed=False,
+        )
 
     def run_file(self, path: str) -> list[ScenarioResult]:
         # Parse skenario dari file terus jalanin satu-satu
-        raise NotImplementedError
+        return []

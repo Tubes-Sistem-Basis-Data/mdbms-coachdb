@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from concurrency_control.protocol import ConcurrencyProtocol, Transaction
-from common.transaction import AccessResponse, Action, ResourceId
+from common.transaction import AccessResponse, AccessStatus, Action, ResourceId
 
 
 @dataclass
@@ -16,19 +16,19 @@ class TimestampProtocol(ConcurrencyProtocol):
         self.tables: dict[ResourceId, TableTimestamps] = {}
 
     def on_begin(self, tx: Transaction) -> None:
-        pass
+        return None
 
     def request(self, tx: Transaction, resource: ResourceId, action: Action,) -> AccessResponse:
-        raise NotImplementedError
+        return AccessResponse(status=AccessStatus.ALLOWED)
 
     def on_write_logged(self, tx: Transaction, op: str, table: str, rid: ResourceId,) -> None:
-        raise NotImplementedError
+        return None
 
     def release(self, tx: Transaction) -> list[Transaction]:
-        raise NotImplementedError
+        return []
 
     def cancel_wait(self, tx: Transaction) -> None:
-        raise NotImplementedError
+        return None
 
     def on_finish(self, tx_id: int) -> None:
-        raise NotImplementedError
+        return None
