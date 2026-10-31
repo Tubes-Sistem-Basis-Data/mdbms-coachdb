@@ -1,4 +1,4 @@
-"""Purpose: rewrite joins. Mock: do nothing."""
+"""Mengubah cartesian product dengan seleksi menjadi join (QO-11)."""
 
 from __future__ import annotations
 

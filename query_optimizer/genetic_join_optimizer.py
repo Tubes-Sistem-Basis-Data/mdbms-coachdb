@@ -1,4 +1,4 @@
-"""Purpose: genetic join optimizer. Mock: return input unchanged."""
+"""Optimasi urutan join dengan genetic algorithm (bonus QO-18)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from .cost_model import CostModel
 
 
 class GeneticJoinOptimizer:
-    def __init__(self, population_size: int = 10, generations: int = 5, mutation_rate: float = 0.1):
+    def __init__(self, population_size: int = 10, generations: int = 5, mutation_rate: float = 0.1) -> None:
         self._population_size = population_size
         self._generations = generations
         self._mutation_rate = mutation_rate
