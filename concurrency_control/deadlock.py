@@ -31,7 +31,10 @@ class DeadlockDetector:
 
     def on_wait(self, waiter: int, holders: set[int]) -> int | None:
         # Tiap request ketahan, update yang ngalangin terus cek cycle
-        # Return tx_id victim dari cycle atau None kalau gaada. yang manggil nanti terusin ke abort ccm/cc3
+        # Return tx_id victim dari cycle atau None kalau gaada
+        # cc2 simpen victim-nya: kalau victim = yang lagi request, balikin ABORTED sekarang
+        # kalau victim tx lain, dia pasti lagi WAIT jadi bakal retry, balikin ABORTED pas retry itu
+        # facade (cc1) yang jalanin abort setelah dapet ABORTED, jadi detector ga manggil abort
         raise NotImplementedError
 
     def choose_victim(self, cycle: list[int]) -> int:
