@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from common.plan import PlanNode
+from .cost_model import CostModel
 
 
-def choose_access_path(plan: Any | None) -> str:
-    """Purpose: decide scan/index strategy. Mock: sequential scan."""
-    return "SEQUENTIAL_SCAN"
+class AccessPathChooser:
+    def choose(self, plan: PlanNode, cost_model: CostModel) -> PlanNode:
+        return plan

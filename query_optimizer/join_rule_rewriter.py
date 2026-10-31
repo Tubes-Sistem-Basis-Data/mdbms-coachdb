@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from common.plan import PlanNode
 
 
-def rewrite_join(query: Any | None) -> Any | None:
-    """Purpose: turn cartesian into join. Mock: leave query unchanged."""
-    return query
+class JoinRuleRewriter:
+    def apply(self, plan: PlanNode) -> PlanNode:
+        return plan

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from common.plan import PlanNode
+from .cost_model import CostModel
 
 
-def order_joins(joins: list[Any] | None) -> list[Any]:
-    """Purpose: choose join order. Mock: just return the same list."""
-    if joins is None:
-        return []
-    return list(joins)
+class JoinOrderOptimizer:
+    def reorder(self, plan: PlanNode, cost_model: CostModel) -> PlanNode:
+        return plan
