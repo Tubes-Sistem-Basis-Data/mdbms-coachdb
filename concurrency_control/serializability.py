@@ -27,10 +27,10 @@ class ScheduleRecorder:
         self.ops: list[Operation] = []
 
     def record(self, tx_id: int, resource: ResourceId, action: Action) -> None:
-        raise NotImplementedError
+        return None
 
     def committed_schedule(self) -> Schedule:
-        raise NotImplementedError
+        return Schedule()
 
 
 class PrecedenceGraph:
@@ -38,15 +38,15 @@ class PrecedenceGraph:
         self.edges: dict[int, set[int]] = defaultdict(set)
 
     def build(self, schedule: Schedule) -> None:
-        raise NotImplementedError
+        return None
 
     def find_cycle(self) -> list[int] | None:
-        raise NotImplementedError
+        return None
 
     def serial_order(self) -> list[int]:
-        raise NotImplementedError
+        return []
 
 
 class SerializabilityChecker:
     def check(self, schedule: Schedule) -> SerializabilityResult:
-        raise NotImplementedError
+        return SerializabilityResult(serializable=False, serial_order=[])
