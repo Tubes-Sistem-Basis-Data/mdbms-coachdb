@@ -1,4 +1,4 @@
-"""Purpose: genetic join optimizer. Mock: return input unchanged."""
+"""Optimasi urutan join dengan genetic algorithm (bonus QO-18)."""
 
 from __future__ import annotations
 

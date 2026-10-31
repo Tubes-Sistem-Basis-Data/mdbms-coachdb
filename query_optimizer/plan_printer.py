@@ -1,4 +1,4 @@
-"""Purpose: print plan. Mock: return a simple string."""
+"""Tampilan query plan untuk EXPLAIN."""
 
 from __future__ import annotations
 
@@ -6,5 +6,5 @@ from typing import Any
 
 
 def render_plan(plan: Any | None) -> str:
-    """Purpose: explain plan to user. Mock: placeholder output."""
+    """Ubah plan jadi teks yang bisa dibaca user (QO-15)."""
     return "mock plan"

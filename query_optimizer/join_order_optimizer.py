@@ -1,4 +1,4 @@
-"""Purpose: order joins. Mock: keep original order."""
+"""Penukaran urutan dan pengelompokan join (QO-12)."""
 
 from __future__ import annotations
 

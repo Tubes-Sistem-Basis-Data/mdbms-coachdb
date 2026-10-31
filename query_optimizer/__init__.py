@@ -1,10 +1,4 @@
-"""Mock package untuk Query Optimizer.
-
-Versi milestone 1 ini sengaja dibuat sangat sederhana: semua fungsi hanya
-mengembalikan placeholder yang aman dan deterministik. Tujuannya adalah agar
-komponen lain bisa mengintegrasikan API QO tanpa bergantung pada logika
-optimasi asli.
-"""
+"""Query Optimizer (Group 3). Untuk MS1 isinya masih skeleton."""
 
 from query_optimizer.access_path_chooser import AccessPathChooser
 from query_optimizer.binder import bind_query
