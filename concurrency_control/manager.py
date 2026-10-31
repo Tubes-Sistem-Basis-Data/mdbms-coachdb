@@ -9,12 +9,14 @@ from common.transaction import (
     TxResult,
     TxStatus,
 )
+from concurrency_control.frm_bridge import AbortCoordinator, FrmBridge
 from concurrency_control.protocol import ConcurrencyProtocol, Transaction
 
 
 class CCManager(ConcurrencyControlManager):
     def __init__(self, frm: FailureRecoveryManager, protocol: ProtocolType = ProtocolType.LOCK_BASED,) -> None:
-        # TODO(CC3): self._bridge = FrmBridge(frm) once frm_bridge.py exists
+        self._bridge = FrmBridge(frm)
+        self._aborts = AbortCoordinator(self._bridge)
         self._frm = frm
         self._mutex = threading.Lock()
         self._cond = threading.Condition(self._mutex)
