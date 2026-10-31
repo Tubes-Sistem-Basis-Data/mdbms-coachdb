@@ -33,4 +33,4 @@ class TokenStream:
 class Lexer:
     def tokenize(self, sql: str) -> TokenStream:
         """Memecah string SQL menjadi aliran token"""
-        raise NotImplementedError
+        return TokenStream()

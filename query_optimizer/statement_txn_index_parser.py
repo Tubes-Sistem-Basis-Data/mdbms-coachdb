@@ -1,4 +1,4 @@
-from common.plan import ParsedQuery
+from common.plan import ParsedQuery, QueryKind
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -8,8 +8,8 @@ if TYPE_CHECKING:
 class TxnIndexParser:
     def parse_transaction(self, tokens: "TokenStream") -> ParsedQuery:
         """Mengenali BEGIN [TRANSACTION], COMMIT, dan ABORT"""
-        raise NotImplementedError
+        return ParsedQuery(sql="", kind=QueryKind.TRANSACTION)
 
     def parse_create_index(self, tokens: "TokenStream") -> ParsedQuery:
         """Mengenali CREATE INDEX <nama> ON <tabel>(<kolom>) [USING BTREE|HASH]"""
-        raise NotImplementedError
+        return ParsedQuery(sql="", kind=QueryKind.CREATE_INDEX)

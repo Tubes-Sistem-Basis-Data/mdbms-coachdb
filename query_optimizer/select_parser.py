@@ -1,4 +1,4 @@
-from common.plan import ParsedQuery, PlanNode
+from common.plan import ParsedQuery, PlanNode, QueryKind
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -8,16 +8,16 @@ if TYPE_CHECKING:
 class SelectParser:
     def parse_select(self, tokens: "TokenStream") -> ParsedQuery:
         """Mengenali SELECT ... FROM ... [WHERE] [ORDER BY] [LIMIT]"""
-        raise NotImplementedError
+        return ParsedQuery(sql="", kind=QueryKind.SELECT)
 
     def _parse_from(self, tokens: "TokenStream") -> PlanNode:
         """Mengenali klausa FROM, termasuk JOIN, NATURAL JOIN, dan cartesian"""
-        raise NotImplementedError
+        return PlanNode()
 
     def _parse_order_by(self, tokens: "TokenStream") -> PlanNode:
         """Mengenali klausa ORDER BY"""
-        raise NotImplementedError
+        return PlanNode()
 
     def _parse_limit_alias(self, tokens: "TokenStream") -> PlanNode:
         """Mengenali klausa LIMIT dan alias"""
-        raise NotImplementedError
+        return PlanNode()

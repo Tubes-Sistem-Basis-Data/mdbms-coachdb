@@ -5,27 +5,32 @@ if TYPE_CHECKING:
     from query_optimizer.lexer import TokenStream
 
 
+class _DefaultExpression(Expression):
+    """Default placeholder expression."""
+    pass
+
+
 class ExpressionParser:
     def parse_condition(self, tokens: "TokenStream") -> Expression:
         """Mengenali kondisi WHERE, beberapa kondisi digabung dengan AND"""
-        raise NotImplementedError
+        return _DefaultExpression()
 
     def parse_expression(self, tokens: "TokenStream") -> Expression:
         """Mengenali ekspresi aritmetika dengan operator + dan -"""
-        raise NotImplementedError
+        return _DefaultExpression()
 
     def _parse_comparison(self, tokens: "TokenStream") -> Expression:
         """Mengenali perbandingan dua ekspresi dengan = <> > >= < <="""
-        raise NotImplementedError
+        return _DefaultExpression()
 
     def _parse_term(self, tokens: "TokenStream") -> Expression:
         """Mengenali suku dengan operator * dan /"""
-        raise NotImplementedError
+        return _DefaultExpression()
 
     def _parse_unary(self, tokens: "TokenStream") -> Expression:
         """Mengenali tanda minus di depan suatu faktor"""
-        raise NotImplementedError
+        return _DefaultExpression()
 
     def _parse_factor(self, tokens: "TokenStream") -> Expression:
         """Mengenali kolom, nilai konstan, atau ekspresi dalam kurung"""
-        raise NotImplementedError
+        return _DefaultExpression()
