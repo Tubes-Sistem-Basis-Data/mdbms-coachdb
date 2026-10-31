@@ -2,7 +2,7 @@
 
 Implementasi oleh group CCM (Group 4).
 
-Facade: `ConcurrencyControlManager` di `common/interfaces/concurrency_control.py`. Selama implementasi asli belum ada, komponen lain memakai `mocks/mock_concurrency_control.py`.
+Facade: `ConcurrencyControlManager` di `common/interfaces/concurrency_control.py`.
 
 ## Requirement
 
