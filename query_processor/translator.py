@@ -8,14 +8,14 @@ from query_processor.tuple import ExecRow, OutputSchema
 
 
 class _NoOpExecutable(Executable):
-    """Default no-op Executable returned by PlanTranslator stubs."""
+    """Executable kosong, dikembalikan PlanTranslator selama belum diimplementasikan."""
 
     def execute(self, ctx: ExecContext) -> ExecutionResult:
         return ExecutionResult(ok=False)
 
 
 class _NoOpRowOperator(RowOperator):
-    """Default no-op RowOperator returned by PlanTranslator stubs."""
+    """RowOperator kosong, dikembalikan PlanTranslator selama belum diimplementasikan."""
 
     schema: OutputSchema = OutputSchema(columns=[])
 

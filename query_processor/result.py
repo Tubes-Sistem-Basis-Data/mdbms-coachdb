@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from common.result import ExecutionResult
 
-type QueryResult = ExecutionResult
+QueryResult = ExecutionResult
 
 __all__ = ["ExecutionResult", "QueryResult", "ResultFormatter"]
 

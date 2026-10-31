@@ -1,4 +1,4 @@
-"""Sort row operator skeleton owned by QP4."""
+"""Operator sort (QP4)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from query_processor.tuple import ExecRow, OutputSchema
 
 
 class SortOp(RowOperator):
-    """Order a child stream by one resolved output column."""
+    """Urutkan baris child berdasarkan satu kolom output."""
 
     def __init__(
         self,
@@ -17,24 +17,24 @@ class SortOp(RowOperator):
         column: ColumnRef,
         ascending: bool = True,
     ) -> None:
-        """Store the child stream, sort key, and direction."""
+        """Simpan child, kolom pengurut, dan arah urutan."""
         self._child = child
         self._column = column
         self._ascending = ascending
 
     @property
     def schema(self) -> OutputSchema:
-        """Return the child's schema unchanged."""
+        """Skema sama dengan child."""
         return self._child.schema
 
     def open(self, ctx: ExecContext) -> None:
-        """Open the child and prepare sorted output."""
+        """Buka child dan siapkan hasil terurut."""
         return None
 
     def next(self) -> ExecRow | None:
-        """Return the next row in sort order, or None when exhausted."""
+        """Baris berikutnya sesuai urutan, None jika sudah habis."""
         return None
 
     def close(self) -> None:
-        """Close the child stream."""
+        """Tutup child."""
         return None
