@@ -7,7 +7,7 @@ CoachDB menerima query SQL dari banyak client sekaligus, menyusun rencana ekseku
 > **Bahasa:** Python 3.10 atau lebih baru (tim memakai 3.12), hanya library standar.
 > **Aturan penting:** anggota sebuah group tidak boleh mengubah kode milik group lain (Spesifikasi 2.2.b), hanya library standar (2.2.d), dan implementasi wajib mengikuti Spesifikasi Komponen (2.2.e). Demo menguji pemahaman individu, jadi setiap PIC harus bisa menjelaskan kodenya sendiri.
 
-**Status:** Milestone 1. Kontrak antarmuka (`common/`) dan mock kelima komponen (`mocks/`) sudah tersedia. Implementasi asli dikerjakan masing-masing group di folder komponennya.
+**Status:** Milestone 1. Kontrak antarmuka (`common/`) dan mock kelima komponen (`mocks/`) sudah tersedia. Kerangka kelas (skeleton) QO, CCM, QP, dan FRM sudah masuk `main`, SM menyusul. Implementasi asli dikerjakan masing-masing group di folder komponennya mulai Milestone 2.
 
 ---
 
@@ -88,21 +88,21 @@ Role bertanda *(usulan)* menunggu konfirmasi group masing-masing.
 
 | NIM | Nama | Role |
 | --- | --- | --- |
-| 13524145 | Angelina Andra Alanna | QO1 |
+| 13524097| Angelina Andra Alanna | QO1 |
 | 13524049 | Arina Azka | QO2 |
 | 13524013 | Anindya Naufal Pinasthika | QO3 |
-| 13524097 | Muhammad Faiz Alfada Dharma | QO4 |
+| 13524145 | Muhammad Faiz Alfada Dharma | QO4 |
 | 13524079 | Dzakwan Muhammad K. P. P. (ketua group) | QO5 |
 
 ### Group 4 - Concurrency Control Manager
 
 | NIM | Nama | Role |
 | --- | --- | --- |
-| 13524100 | Arghawisesa Dwinanda Arham | CC1 (usulan) |
-| 13524121 | Billy Ontoseno Irawan | CC2 (usulan) |
-| 13523037 | Buege Mahara Putra | CC3 (usulan) |
-| 13524127 | Fazri Arrashyi Putra | CC4 (usulan) |
-| 13524112 | Richard Samuel Simanullang | CC5 (usulan) |
+| 13524112 | Richard Samuel Simanullang | CC1 |
+| 13524127 | Fazri Arrashyi Putra | CC2 |
+| 13523037 | Buege Mahara Putra | CC3 |
+| 13524121 | Billy Ontoseno Irawan | CC4 |
+| 13524100 | Arghawisesa Dwinanda Arham | CC5 |
 
 ### Group 5 - Query Processor
 
@@ -427,6 +427,7 @@ Ringkasan dari [`docs/decisions.md`](docs/decisions.md):
 mdbms-coachdb/
 ├── README.md                  # dokumen ini
 ├── main.py                    # bootstrap: SM → FRM → CCM → recover → QO → QP
+├── client.py                  # CLI client (Group 5)
 ├── .gitignore
 ├── .github/
 │   └── CODEOWNERS             # pemilik tiap folder
@@ -450,8 +451,10 @@ mdbms-coachdb/
 ├── storage_manager/           # Group 1
 ├── concurrency_control/       # Group 4
 ├── failure_recovery/          # Group 2
+├── drivers/                   # driver program komponen (QP-14, SM-15, dst.)
 └── tests/
-    └── test_contract.py       # uji kontrak dan smoke test dengan mock
+    ├── test_contract.py       # uji kontrak dan smoke test dengan mock
+    └── ccm/                   # unit test CCM (Group 4)
 ```
 
 Isi folder di dalam tiap komponen diatur oleh group masing-masing. Driver komponen, server, CLI client, dan database contoh asli ditambahkan oleh group pemiliknya. `data/` dibuat saat runtime dan diabaikan git.
@@ -808,6 +811,8 @@ Pemilik tiap folder ada di [`.github/CODEOWNERS`](.github/CODEOWNERS). Slug team
 python -m unittest discover -s tests -v
 ```
 
+Perintah di atas ikut menjalankan unit test di subfolder `tests/<komponen>/`. Unit test juga hanya boleh memakai `unittest`, jangan `pytest`.
+
 `tests/test_contract.py` memeriksa bahwa setiap mock turunan ABC yang benar, tidak ada method abstrak tersisa, signature sama dengan kontrak, serta smoke test alur SELECT, INSERT, UPDATE, dan ABORT memakai mock.
 
 ### Skenario end-to-end yang wajib lulus sebelum Final Integration
@@ -903,7 +908,7 @@ python -m unittest discover -s tests -v
 | Wakil Group 1 - SM | Kloce (SM1) *(usulan)* | Azri (SM4) |
 | Wakil Group 2 - FRM | Wafiq (FR1) *(usulan)* | Majiid (FR2) |
 | Wakil Group 3 - QO | Dzakwan (QO1) | Andra (QO5) |
-| Wakil Group 4 - CCM | Argha (CC1) *(usulan)* | Buege (CC3) |
+| Wakil Group 4 - CCM | Richard (CC1) *(usulan)* | Buege (CC3) |
 | Wakil Group 5 - QP | Kevin (QP1) *(usulan)* | Emilio (QP2) |
 | Notulis sync | Bergilir G1 → G2 → G4 → G5 → G3 | Group berikutnya |
 

@@ -1,8 +1,4 @@
-"""Dumbest possible QO mock.
-
-Purpose: parse SQL and return a safe placeholder plan. Real optimizer does the
-real work later.
-"""
+"""Facade QO sementara untuk Milestone 1."""
 
 from __future__ import annotations
 
@@ -12,13 +8,13 @@ from common.plan import ParsedQuery, PlanNode, Project, QueryKind, TableScan, Tr
 
 
 class MockQueryOptimizer(QueryOptimizer):
-    """Return 0.0 and a dummy plan."""
+    """Facade QO versi awal, hanya mengenali BEGIN, COMMIT, ABORT, dan SELECT."""
 
     def parse_query(self, sql: str) -> ParsedQuery:
-        """Purpose: parse SQL. Mock: accept only BEGIN/COMMIT/ABORT/SELECT."""
+        """Ubah teks SQL jadi ParsedQuery. Dipanggil QP."""
         s = sql.strip().rstrip(";")
         if not s:
-            raise QuerySyntaxError("mock: empty query", position=0, token="")
+            raise QuerySyntaxError("mock: query kosong", position=0, token="")
         u = s.upper()
         if u.startswith("BEGIN"):
             return ParsedQuery(sql, QueryKind.TRANSACTION, command=TransactionCommand.BEGIN)
@@ -29,16 +25,16 @@ class MockQueryOptimizer(QueryOptimizer):
         if u.startswith("SELECT"):
             plan = Project(columns=[], children=[TableScan(table="student")], output_columns=[])
             return ParsedQuery(sql, QueryKind.SELECT, plan=plan, estimated_cost=0.0)
-        raise QuerySyntaxError("mock: not supported", position=0, token=s.split()[0])
+        raise QuerySyntaxError("mock: belum didukung", position=0, token=s.split()[0])
 
     def optimize_query(self, query: ParsedQuery) -> ParsedQuery:
-        """Purpose: optimize. Mock: do nothing."""
+        """Optimasi plan. Dipanggil QP setelah parse_query."""
         return query
 
     def get_cost(self, plan: PlanNode) -> float:
-        """Purpose: estimate cost. Mock: always 0.0."""
+        """Hitung biaya plan dalam transfer blok."""
         return 0.0
 
     def explain(self, query: ParsedQuery) -> str:
-        """Purpose: show plan. Mock: return a short placeholder."""
+        """Tampilkan plan untuk perintah EXPLAIN."""
         return "mock plan"

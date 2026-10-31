@@ -1,4 +1,4 @@
-"""Purpose: build a plan. Mock: return a dummy table scan."""
+"""Penyusun plan: rewrite join, pilih jalur akses, atur urutan join."""
 
 from __future__ import annotations
 
