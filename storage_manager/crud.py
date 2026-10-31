@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterator
+import threading
+from typing import TYPE_CHECKING, Callable, Iterator, Optional
 
-from common.storage import RID, Row
+from common.types import LSN, RID, Row, Value
+
+if TYPE_CHECKING:
+    from storage_manager.buffer import BufferPool, Frame
+    from storage_manager.catalog import Catalog
+    from storage_manager.index import IndexManager
+    from storage_manager.stats import StatisticsManager
 
 
 class RecordManager:
@@ -12,53 +19,50 @@ class RecordManager:
 
     def __init__(
         self,
-        lock: Any,
-        buffer: Any,
-        catalog: Any,
-        index_manager: Any,
-        stats: Any,
+        lock: threading.RLock,
+        buffer: BufferPool,
+        catalog: Catalog,
+        index_manager: IndexManager,
+        stats: StatisticsManager,
     ) -> None:
         self._lock = lock
+        self._last_page: dict[str, int] = {}
         self._buffer = buffer
         self._catalog = catalog
         self._index_manager = index_manager
         self._stats = stats
 
-    def validate(self, table: str, values: list) -> list:
-        return []
+    def validate(self, table: str, values: tuple[Value, ...]) -> tuple[Value, ...]:
+        return ()
 
     def scan(self, table: str) -> Iterator[Row]:
         return iter(())
 
-    def fetch(self, table: str, rid: RID) -> Row | None:
+    def fetch(self, table: str, rid: RID) -> Optional[Row]:
         return None
 
-    def allocate_rid(self, table: str) -> RID:
+    def insert(
+        self,
+        table: str,
+        values: tuple[Value, ...],
+        log_fn: Callable[[RID], LSN],
+    ) -> RID:
         return None
 
-    def release_rid(self, rid: RID) -> None:
+    def insert_at(self, table: str, rid: RID, values: tuple[Value, ...], lsn: LSN) -> None:
         return None
 
-    def insert(self, table: str, rid: RID, values: list, lsn: int | None) -> None:
+    def update(self, table: str, rid: RID, values: tuple[Value, ...], lsn: LSN) -> None:
         return None
 
-    def insert_at(self, table: str, rid: RID, values: list, lsn: int) -> None:
-        return None
-
-    def update(self, table: str, rid: RID, values: list, lsn: int | None) -> None:
-        return None
-
-    def delete(self, table: str, rid: RID, lsn: int | None) -> None:
-        return None
-
-    def delete_all(self, table: str, lsn: int | None) -> None:
+    def delete(self, table: str, rid: RID, lsn: LSN) -> None:
         return None
 
     def truncate(self, table: str) -> int:
         return 0
 
-    def _check_primary_key(self, table: str, values: list, rid: RID | None = None) -> None:
+    def _check_primary_key(self, table: str, values: tuple[Value, ...]) -> None:
         return None
 
-    def _find_slot(self, table: str):
+    def _find_slot(self, table: str) -> tuple[Frame, int]:
         return None

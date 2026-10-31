@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from common.interfaces.storage_manager import StorageManagerAPI
+
 
 class SMDriver:
-    """Driver sementara komponen Storage Manager."""
 
-    def __init__(self, sm=None, data_dir: str | None = None) -> None:
-        self._sm = sm
-        self._data_dir = data_dir
+    def __init__(self, sm: StorageManagerAPI | None = None, data_dir: str | None = None) -> None:
+        self._sm: StorageManagerAPI | None = sm
+        self._data_dir: str | None = data_dir
 
     def run_all(self) -> None:
         return None

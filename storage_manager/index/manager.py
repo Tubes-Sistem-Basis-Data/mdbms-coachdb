@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Callable, Iterator, Optional, Union
+from typing import TYPE_CHECKING, Callable, Iterator, Optional
 
-from common.catalog import IndexInfo, IndexKind
-from common.storage import RID, Row
+from common.types import RID, IndexInfo, IndexKind, Row, Value
 
-Value = Union[int, float, str, None]
+if TYPE_CHECKING:
+    from storage_manager.catalog import Catalog
 
 
 class Index(ABC):
@@ -39,7 +39,7 @@ class Index(ABC):
 class IndexManager:
     def __init__(
         self,
-        catalog: "Catalog", 
+        catalog: Catalog,
         scan_fn: Callable[[str], Iterator[Row]],
     ) -> None:
         self._catalog = catalog

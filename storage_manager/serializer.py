@@ -6,7 +6,7 @@ RecordCodec menggabungkan dua fitur:
 
 from __future__ import annotations
 
-from common.catalog import ColumnSchema, TableSchema
+from common.types import ColumnSchema, TableSchema, Value
 
 
 class RecordCodec: # Encode/decode nilai dan record
@@ -61,16 +61,16 @@ class RecordCodec: # Encode/decode nilai dan record
         raise NotImplementedError
 
     @staticmethod
-    def validate(schema: TableSchema, values: tuple) -> None:
+    def validate(schema: TableSchema, values: tuple[Value, ...]) -> tuple[Value, ...]:
         # Memastikan nilai valid terhadap skema
         raise NotImplementedError
 
     @staticmethod
-    def encode(schema: TableSchema, values: tuple) -> bytes:
+    def encode(schema: TableSchema, values: tuple[Value, ...]) -> bytes:
         # Serialisasi satu record menjadi bytes
         raise NotImplementedError
 
     @staticmethod
-    def decode(schema: TableSchema, data: bytes) -> tuple:
+    def decode(schema: TableSchema, data: bytes) -> tuple[Value, ...]:
         # Deserialisasi bytes menjadi tuple nilai
         raise NotImplementedError
