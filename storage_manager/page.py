@@ -95,6 +95,8 @@ class SlottedPage:
     Kumpulan operasi low-level byte dalam level page, adalah static class yang tidak bisa dijadikan objek
     """
 
+    HEADER: struct.Struct = struct.Struct("<IQHHI")
+
     @staticmethod
     def init_page(page_id: int, record_size: int) -> bytearray:
         """

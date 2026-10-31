@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from common.catalog import TableSchema
-from storage_manager.recordcodec import RecordCodec
+from storage_manager.serializer import RecordCodec
 
 _SCHEMA = TableSchema("t", [])
 

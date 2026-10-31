@@ -28,6 +28,14 @@ class SemanticError(MdbmsError):
         self.object_name = object_name
 
 
+class TableNotFoundError(SemanticError):
+    """Tabel tidak ada di katalog. Dilempar SM.get_table_schema."""
+
+
+class IndexDefinitionError(SemanticError):
+    """Definisi index tidak valid: kolom tidak ada, nama ganda, atau operasi tak didukung."""
+
+
 class TransactionAbortedError(MdbmsError):
     """Transaksi dibatalkan oleh CCM."""
 

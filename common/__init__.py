@@ -10,12 +10,14 @@ from common.catalog import (
     TableStats,
 )
 from common.errors import (
+    IndexDefinitionError,
     LogError,
     MdbmsError,
     QuerySyntaxError,
     SchemaViolationError,
     SemanticError,
     StorageError,
+    TableNotFoundError,
     TransactionAbortedError,
 )
 from common.expression import (
@@ -70,8 +72,8 @@ from common.transaction import (
 
 __all__ = [
     "ColumnSchema", "DataType", "ForeignKey", "IndexInfo", "IndexKind", "TableSchema", "TableStats",
-    "LogError", "MdbmsError", "QuerySyntaxError", "SchemaViolationError", "SemanticError",
-    "StorageError", "TransactionAbortedError",
+    "IndexDefinitionError", "LogError", "MdbmsError", "QuerySyntaxError", "SchemaViolationError", "SemanticError",
+    "StorageError", "TableNotFoundError", "TransactionAbortedError",
     "And", "ArithOp", "BinaryOp", "ColumnRef", "CompOp", "Comparison", "Expression", "Literal",
     "CheckpointResult", "LogKind", "LogRecord", "LogResult", "RecoveryResult", "RecoveryTarget",
     "CreateIndex", "Delete", "Filter", "IndexScan", "Insert", "Join", "JoinKind", "ParsedQuery",

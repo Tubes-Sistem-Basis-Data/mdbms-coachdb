@@ -1,0 +1,32 @@
+from __future__ import annotations
+
+from typing import Optional
+
+from common.errors import IndexDefinitionError
+from common.types import RID, Value
+from storage_manager.index.manager import Index
+
+DEFAULT_BUCKETS = 64
+
+class HashIndex(Index):
+    def __init__(
+        self, table: str, column: str, n_buckets: int = DEFAULT_BUCKETS
+    ) -> None:
+        super().__init__(table, column)
+        self._n_buckets: int = n_buckets
+        self._buckets: list[dict] = [{} for _ in range(n_buckets)]
+
+    def insert(self, key: Value, rid: RID) -> None:
+        raise NotImplementedError
+
+    def delete(self, key: Value, rid: RID) -> None:
+        raise NotImplementedError
+
+    def search(self, key: Value) -> list[RID]:
+        raise NotImplementedError
+
+    def range(self, low: Optional[Value], high: Optional[Value]) -> list[RID]:
+        raise IndexDefinitionError("hash index tidak mendukung pencarian rentang")
+
+    def height(self) -> int:
+        raise NotImplementedError
