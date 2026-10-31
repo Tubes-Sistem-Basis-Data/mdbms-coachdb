@@ -7,7 +7,7 @@ CoachDB menerima query SQL dari banyak client sekaligus, menyusun rencana ekseku
 > **Bahasa:** Python 3.10 atau lebih baru (tim memakai 3.12), hanya library standar.
 > **Aturan penting:** anggota sebuah group tidak boleh mengubah kode milik group lain (Spesifikasi 2.2.b), hanya library standar (2.2.d), dan implementasi wajib mengikuti Spesifikasi Komponen (2.2.e). Demo menguji pemahaman individu, jadi setiap PIC harus bisa menjelaskan kodenya sendiri.
 
-**Status:** Milestone 1. Kontrak antarmuka (`common/`) dan mock kelima komponen (`mocks/`) sudah tersedia. Kerangka kelas (skeleton) QO, CCM, QP, dan FRM sudah masuk `main`, SM menyusul. Implementasi asli dikerjakan masing-masing group di folder komponennya mulai Milestone 2.
+**Status:** Milestone 1. Kontrak antarmuka (`common/`) dan mock kelima komponen (`mocks/`) sudah tersedia. Implementasi asli dikerjakan masing-masing group di folder komponennya mulai Milestone 2.
 
 ---
 
@@ -451,7 +451,7 @@ mdbms-coachdb/
 ├── storage_manager/           # Group 1
 ├── concurrency_control/       # Group 4
 ├── failure_recovery/          # Group 2
-├── drivers/                   # driver program komponen (QP-14, SM-15, dst.)
+├── drivers/                   # driver program komponen (QP-14, dst.)
 └── tests/
     ├── test_contract.py       # uji kontrak dan smoke test dengan mock
     └── ccm/                   # unit test CCM (Group 4)
