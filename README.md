@@ -20,7 +20,7 @@ Daftar requirement tiap komponen ada di `README.md` folder komponennya.
 
 ## Anggota
 
-**Ketua supergroup:** Angelina Andra Alanna (13524097, Group 3)
+**Ketua supergroup:** Angelina Andra Alanna (13524079, Group 3)
 
 ### Group 1 - Storage Manager
 
@@ -47,11 +47,11 @@ Daftar requirement tiap komponen ada di `README.md` folder komponennya.
 
 | NIM | Nama | Role |
 | --- | --- | --- |
-| 13524097 | Angelina Andra Alanna | QO1 |
+| 13524079 | Angelina Andra Alanna | QO1 |
 | 13524049 | Arina Azka | QO2 |
 | 13524013 | Anindya Naufal Pinasthika | QO3 |
-| 13524145 | Muhammad Faiz Alfada Dharma | QO4 |
-| 13524079 | Dzakwan Muhammad K. P. P. (ketua group) | QO5 |
+| 13524097 | Muhammad Faiz Alfada Dharma | QO4 |
+| 13524145 | Dzakwan Muhammad K. P. P. (ketua group) | QO5 |
 
 ### Group 4 - Concurrency Control Manager
 
