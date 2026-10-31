@@ -6,7 +6,7 @@ from common.catalog import DataType
 from common.expression import ColumnRef
 from common.storage import RID
 
-type Value = int | float | str | None
+Value = int | float | str | None
 
 
 @dataclass(frozen=True)

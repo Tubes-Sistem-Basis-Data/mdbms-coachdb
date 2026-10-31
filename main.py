@@ -7,6 +7,7 @@ import sys
 
 from common import config
 from common.interfaces import QueryProcessor
+from common.result import ExecutionResult
 from common.transaction import ProtocolType
 from concurrency_control import CCManager
 from failure_recovery import FailureRecoveryManager
@@ -58,7 +59,7 @@ def bootstrap(args: argparse.Namespace) -> QueryProcessor:
     return QueryProcessorFacade(qo, sm, ccm, frm)
 
 
-def print_result(sql: str, result) -> None:
+def print_result(sql: str, result: ExecutionResult) -> None:
     """Cetak ExecutionResult dalam bentuk tabel sederhana."""
     print(f"\n> {sql}")
     if not result.ok:

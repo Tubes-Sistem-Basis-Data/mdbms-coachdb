@@ -6,7 +6,7 @@ if TYPE_CHECKING:
 
 
 class _DefaultExpression(Expression):
-    """Default placeholder expression."""
+    """Ekspresi kosong, nilai default selama parser belum diimplementasikan."""
     pass
 
 

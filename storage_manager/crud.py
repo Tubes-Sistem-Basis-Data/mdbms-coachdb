@@ -6,10 +6,11 @@ import threading
 from typing import TYPE_CHECKING, Callable, Iterator, Optional
 
 from common.storage import RID, Row
+from storage_manager.buffer import Frame
 from storage_manager.types import LSN, Value
 
 if TYPE_CHECKING:
-    from storage_manager.buffer import BufferPool, Frame
+    from storage_manager.buffer import BufferPool
     from storage_manager.catalog import Catalog
     from storage_manager.index import IndexManager
     from storage_manager.stats import StatisticsManager
@@ -48,7 +49,7 @@ class RecordManager:
         values: tuple[Value, ...],
         log_fn: Callable[[RID], LSN],
     ) -> RID:
-        return None
+        return RID(table=table, page_id=0, slot=0)
 
     def insert_at(self, table: str, rid: RID, values: tuple[Value, ...], lsn: LSN) -> None:
         return None
@@ -66,4 +67,4 @@ class RecordManager:
         return None
 
     def _find_slot(self, table: str) -> tuple[Frame, int]:
-        return None
+        return Frame(table=table, page_id=0, data=bytearray()), 0

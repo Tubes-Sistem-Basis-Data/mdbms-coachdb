@@ -1,4 +1,4 @@
-"""Join row operator skeleton owned by QP4."""
+"""Operator join (QP4)."""
 
 from __future__ import annotations
 
@@ -11,11 +11,10 @@ from query_processor.tuple import ExecRow, OutputSchema
 
 
 class BlockNestedLoopJoinOp(RowOperator):
-    """Combine two child streams using the Block Nested Loop Join interface.
+    """Gabungkan dua child dengan Block Nested Loop Join.
 
-    The translator resolves NATURAL JOIN's common columns to index pairs and
-    supplies the output schema. The left child is the outer input; the right
-    child is the inner input, matching the optimizer's join cost model.
+    Kolom bersama NATURAL JOIN dan skema output disiapkan translator.
+    Child kiri jadi outer, child kanan jadi inner, sama dengan cost model QO.
     """
 
     def __init__(
@@ -29,7 +28,7 @@ class BlockNestedLoopJoinOp(RowOperator):
         shared_columns: tuple[tuple[int, int], ...] = (),
         block_size: int | None = None,
     ) -> None:
-        """Store child operators and the resolved join configuration."""
+        """Simpan kedua child dan konfigurasi join."""
         self._left = left
         self._right = right
         self._schema = schema
@@ -41,17 +40,17 @@ class BlockNestedLoopJoinOp(RowOperator):
 
     @property
     def schema(self) -> OutputSchema:
-        """Return the output schema, with shared NATURAL JOIN columns once."""
+        """Skema output, kolom bersama NATURAL JOIN cukup muncul sekali."""
         return self._schema
 
     def open(self, ctx: ExecContext) -> None:
-        """Open child streams and prepare this operator for iteration."""
+        """Buka kedua child sebelum iterasi."""
         return None
 
     def next(self) -> ExecRow | None:
-        """Return the next matching joined row, or None when exhausted."""
+        """Baris hasil join berikutnya, None jika sudah habis."""
         return None
 
     def close(self) -> None:
-        """Close both child streams, including when iteration failed."""
+        """Tutup kedua child, termasuk saat iterasi gagal."""
         return None
