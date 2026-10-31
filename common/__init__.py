@@ -13,6 +13,7 @@ from common.errors import (
     LogError,
     MdbmsError,
     QuerySyntaxError,
+    SchemaViolationError,
     SemanticError,
     StorageError,
     TransactionAbortedError,
@@ -69,8 +70,8 @@ from common.transaction import (
 
 __all__ = [
     "ColumnSchema", "DataType", "ForeignKey", "IndexInfo", "IndexKind", "TableSchema", "TableStats",
-    "LogError", "MdbmsError", "QuerySyntaxError", "SemanticError", "StorageError",
-    "TransactionAbortedError",
+    "LogError", "MdbmsError", "QuerySyntaxError", "SchemaViolationError", "SemanticError",
+    "StorageError", "TransactionAbortedError",
     "And", "ArithOp", "BinaryOp", "ColumnRef", "CompOp", "Comparison", "Expression", "Literal",
     "CheckpointResult", "LogKind", "LogRecord", "LogResult", "RecoveryResult", "RecoveryTarget",
     "CreateIndex", "Delete", "Filter", "IndexScan", "Insert", "Join", "JoinKind", "ParsedQuery",

@@ -40,5 +40,9 @@ class StorageError(MdbmsError):
     """Kegagalan operasi storage."""
 
 
+class SchemaViolationError(StorageError):
+    """Nilai tidak sesuai skema: tipe salah, terlalu panjang, atau NULL tak diizinkan."""
+
+
 class LogError(MdbmsError):
     """Kegagalan operasi log."""
