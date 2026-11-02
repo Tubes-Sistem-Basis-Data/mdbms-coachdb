@@ -110,8 +110,12 @@ mdbms-coachdb/
 
 ## Aturan kontribusi
 
-- Alur branch: `<komponen>/<kode-fitur>-<deskripsi>` → `group/<komponen>` → `main`, selalu lewat PR. Contoh: `qo/qo-04-expression-parser`.
-- Format commit: `[KODE] ringkasan singkat`, contoh `[QO-04] tambah parser ekspresi`.
+Detail lengkap ada di [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+- Branch dibuat dari `main` dan masuk kembali ke `main` lewat PR. `main` diproteksi, tidak bisa push langsung.
+- Nama branch: `<type>/<scope>/<deskripsi>`, contoh `feat/qo/qo-04-expression-parser`.
+- Pesan commit dan judul PR: `<type>(<scope>): <deskripsi>`, contoh `feat(qo): tambah parser ekspresi`.
+- Format di atas dicek otomatis oleh GitHub Actions (`Conventions`), begitu juga unit test (`Tests`).
 - Jangan mengubah folder milik group lain.
 - Hanya library standar Python. Unit test memakai `unittest`, bukan `pytest`.
 - `python -m unittest discover -s tests` harus lulus sebelum PR di-merge.
