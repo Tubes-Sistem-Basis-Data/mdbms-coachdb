@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from common import config
+from common.errors import LogError
 from common.interfaces import ConcurrencyControlManager, StorageManager
 from common.interfaces import FailureRecoveryManager as FailureRecoveryManagerBase
 from common.log import (
@@ -12,6 +16,8 @@ from common.log import (
     RecoveryTarget,
 )
 from common.transaction import TxResult, TxStatus
+from failure_recovery.log.log_reader import LogReader
+from failure_recovery.log.wal_logger import WalLogger
 
 
 class FailureRecoveryManager(FailureRecoveryManagerBase):
@@ -23,9 +29,13 @@ class FailureRecoveryManager(FailureRecoveryManagerBase):
         master_path: str | None = None,
         snapshot_dir: str | None = None,
     ) -> None:
-        self._log_writer = None
-        self._log_flusher = None
-        self._log_reader = None
+        resolved = Path(log_path) if log_path else Path(config.DATA_DIR) / "wal.log"
+        self._log_path = resolved
+        self._master_path = master_path
+        self._snapshot_dir = snapshot_dir
+        self._log_writer = WalLogger(str(resolved))
+        self._log_reader = LogReader(str(resolved))
+        self._log_flusher = self._log_writer
         self._rollback_interface = None
         self._checkpoint_service = None
         self._recovery_service = None
@@ -34,11 +44,19 @@ class FailureRecoveryManager(FailureRecoveryManagerBase):
 
     def write_log(self, record: LogRecord) -> LogResult:
         """Tambah catatan log lewat WalLogger. Dipanggil CCM."""
-        return LogResult(ok=False, message="belum diimplementasikan")
+        try:
+            lsn = self._log_writer.append(record)
+        except LogError as exc:
+            return LogResult(ok=False, message=str(exc))
+        return LogResult(ok=True, lsn=lsn)
 
     def flush_log(self, up_to_lsn: int) -> bool:
         """Pastikan log sampai `up_to_lsn` permanen. Dipanggil SM sebelum tulis page."""
-        return False
+        try:
+            self._log_writer.flush_log_until(up_to_lsn)
+        except LogError:
+            return False
+        return True
 
     def rollback(self, tx_id: int) -> TxResult:
         """Undo perubahan transaksi lewat RollbackManager. Dipanggil CCM.abort."""
@@ -58,7 +76,7 @@ class FailureRecoveryManager(FailureRecoveryManagerBase):
 
     def read_log(self, tx_id: int | None = None) -> list[LogRecord]:
         """Isi log lewat LogReader, bisa difilter per transaksi."""
-        return []
+        return self._log_reader.read_log(-1 if tx_id is None else tx_id)
 
     def set_dependencies(self, sm: StorageManager, ccm: ConcurrencyControlManager) -> None:
         """Suntik SM dan CCM. Dipanggil main.py saat bootstrap."""
@@ -67,4 +85,4 @@ class FailureRecoveryManager(FailureRecoveryManagerBase):
 
     def close(self) -> None:
         """Tutup sumber daya FRM."""
-        return None
+        self._log_writer.close()
