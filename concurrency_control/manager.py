@@ -28,25 +28,48 @@ class CCManager(ConcurrencyControlManager):
         self._transactions: dict[int, Transaction] = {}
         self._paused = False
         self._protocol_type = protocol
-        # nanti diisi self._make_protocol(protocol)
-        self._protocol: ConcurrencyProtocol | None = None
+        self._protocol: ConcurrencyProtocol = self._make_protocol(protocol)
         self.schedule = ScheduleRecorder()
 
     def begin_transaction(self) -> int:
-        # tx_id = last_tx_id + 1, tulis log BEGIN
-        # ditahan selama pause_new_transactions aktif
-        return 0
+        with self._cond:
+            while self._paused:
+                self._cond.wait()
+            self._last_tx_id += 1
+            self._next_ts += 1
+            tx = Transaction(tx_id=self._last_tx_id, timestamp=self._next_ts)
+            self._transactions[tx.tx_id] = tx
+            self._protocol.on_begin(tx)
+        try:
+            self._bridge.log_begin(tx.tx_id)
+        except Exception:
+            with self._mutex:
+                self._finish(tx.tx_id, TxStatus.FAILED)
+            raise
+        return tx.tx_id
 
     def validate_object(self, tx_id: int, resource: ResourceId, action: Action,change: DataChange | None = None,) -> AccessResponse:
-        # minta izin ke protokol aktif
-        # - tx tidak aktif, atau WRITE tanpa change -> ABORTED
-        # - ALLOWED + WRITE -> tulis satu log DATA lewat bridge, isi lsn
-        # - ALLOWED -> self.schedule.record(tx_id, resource, action) (CC-09)
-        # - ABORTED -> jalankan self.abort(tx_id), balikin ABORTED
         return AccessResponse(status=AccessStatus.ALLOWED)
 
     def commit(self, tx_id: int) -> TxResult:
-        # log COMMIT + flush lewat bridge, lalu protocol.on_finish, tutup transaksi
+        with self._mutex:
+            tx = self._require_active(tx_id)
+            if tx is None:
+                return TxResult(tx_id=tx_id, status=TxStatus.FAILED, ok=False, message=f"T{tx_id} tidak aktif")
+            tx.status = TxStatus.PARTIALLY_COMMITTED
+        try:
+            self._bridge.log_commit(tx_id)
+        except Exception as exc:
+            with self._mutex:
+                tx.status = TxStatus.FAILED
+            return TxResult(
+                tx_id=tx_id,
+                status=TxStatus.FAILED,
+                ok=False,
+                message=f"Status commit T{tx_id} tidak pasti, cek setelah restart: {exc}",
+            )
+        with self._mutex:
+            self._finish(tx_id, TxStatus.COMMITTED)
         return TxResult(tx_id=tx_id, status=TxStatus.COMMITTED, ok=True)
 
     def abort(self, tx_id: int) -> TxResult:
@@ -55,12 +78,15 @@ class CCManager(ConcurrencyControlManager):
         return TxResult(tx_id=tx_id, status=TxStatus.ABORTED, ok=False)
 
     def _require_active(self, tx_id: int) -> Transaction | None:
-        # transaksi ACTIVE dengan tx_id ini, None kalau tidak ada. Panggil saat pegang _mutex
-        return None
+        tx = self._transactions.get(tx_id)
+        return tx if tx is not None and tx.status is TxStatus.ACTIVE else None
 
     def _finish(self, tx_id: int, status: TxStatus) -> None:
-        # set status akhir, hapus dari tabel aktif, protocol.on_finish, notify _cond
-        return None
+        tx = self._transactions.pop(tx_id, None)
+        if tx is not None:
+            tx.status = status
+        self._protocol.on_finish(tx_id)
+        self._cond.notify_all()
 
     def set_protocol(self, protocol: ProtocolType) -> None:
         # ganti protokol, raise MdbmsError kalau masih ada transaksi aktif
@@ -80,13 +106,15 @@ class CCManager(ConcurrencyControlManager):
         return None
 
     def pause_new_transactions(self) -> None:
-        # tahan begin_transaction berikutnya
-        return None
+        with self._mutex:
+            self._paused = True
 
     def wait_until_idle(self) -> None:
-        # tunggu sampai tidak ada transaksi aktif
-        return None
+        with self._cond:
+            while self._transactions:
+                self._cond.wait()
 
     def resume_transactions(self) -> None:
-        # izinkan transaksi baru lagi dan bangunkan yang tertahan
-        return None
+        with self._cond:
+            self._paused = False
+            self._cond.notify_all()
