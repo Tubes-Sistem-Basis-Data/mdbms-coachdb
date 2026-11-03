@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from common.log import LogRecord, RecoveryTarget, RestoreResult
+from common.log import LogRecord, RecoveryTarget
+from failure_recovery.results import RestoreResult
 from failure_recovery.ports import CheckpointQueryInterface, LogReadInterface, LogWriter
 
 

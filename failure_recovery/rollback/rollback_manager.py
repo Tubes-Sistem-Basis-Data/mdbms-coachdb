@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from common.log import LogRecord
-from common.transaction import RollbackResult
+from failure_recovery.results import RollbackResult
 from failure_recovery.ports import (
     LogFlusher,
     LogReadInterface,

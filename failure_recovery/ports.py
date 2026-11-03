@@ -5,9 +5,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from common.log import CheckpointResult, LogRecord, RecoveryTarget, RestoreResult
+from common.log import CheckpointResult, LogRecord, RecoveryTarget
 from common.storage import RID
-from common.transaction import ChangeOp, RollbackResult
+from common.transaction import ChangeOp
+from failure_recovery.results import RestoreResult, RollbackResult
 
 if TYPE_CHECKING:
     from failure_recovery.checkpoint.meta import CheckpointMeta

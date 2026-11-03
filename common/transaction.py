@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Self, cast
 
 from common.storage import RID
 
@@ -32,24 +31,15 @@ class ChangeOp(Enum):
     DELETE = "DELETE"
 
 
-class RollbackResult(Enum):
-    """Hasil pembatalan transaksi."""
-
-    DONE = "DONE"
-    ALREADY_ABORT = "ALREADY_ABORT"
-    COMMITTED = "COMMITTED"
-    UNKNOWN_TX = "UNKNOWN_TX"
-
-
 class _NoRecord:
     """Penanda tidak ada baris (before INSERT, after DELETE). Bukan None."""
 
     _instance: _NoRecord | None = None
 
-    def __new__(cls) -> Self:
+    def __new__(cls) -> _NoRecord:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-        return cast(Self, cls._instance)
+        return cls._instance
 
     def __repr__(self) -> str:
         return "NO_RECORD"
@@ -68,7 +58,6 @@ class _NoRecord:
 
 
 NO_RECORD = _NoRecord()
-RECORD_ABSENT = NO_RECORD
 
 
 @dataclass

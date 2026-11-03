@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from common.interfaces import ConcurrencyControlManager, StorageManager
+from common.interfaces import FailureRecoveryManager as FailureRecoveryManagerBase
+from common.log import (
+    CheckpointResult,
+    LogRecord,
+    LogResult,
+    RecoveryResult,
+    RecoveryTarget,
+)
+from common.transaction import TxResult, TxStatus
 
-from common.interfaces.failure_recovery import IFailureRecovery
-from common.log import CheckpointResult, LogRecord, RestoreResult
-from common.storage import RID
-from common.transaction import ChangeOp, RollbackResult
-from failure_recovery.recovery.analysis import RecoveryReport
 
-
-class FailureRecoveryManager(IFailureRecovery):
+class FailureRecoveryManager(FailureRecoveryManagerBase):
     """Wiring dan delegasi ke subkomponen log, rollback, checkpoint, recovery."""
 
     def __init__(
@@ -29,49 +32,39 @@ class FailureRecoveryManager(IFailureRecovery):
         self._sm = None
         self._ccm = None
 
-    def attach_storage(self, sm) -> None:
-        self._sm = sm
+    def write_log(self, record: LogRecord) -> LogResult:
+        """Tambah catatan log lewat WalLogger. Dipanggil CCM."""
+        return LogResult(ok=False, message="belum diimplementasikan")
 
-    def attach_ccm(self, ccm) -> None:
-        self._ccm = ccm
+    def flush_log(self, up_to_lsn: int) -> bool:
+        """Pastikan log sampai `up_to_lsn` permanen. Dipanggil SM sebelum tulis page."""
+        return False
 
-    def log_begin(self, tx_id: int) -> int:
-        return 0
-
-    def log_write(
-        self,
-        tx_id: int,
-        op: ChangeOp,
-        rid: RID,
-        before,
-        after,
-    ) -> int:
-        return 0
-
-    def log_commit(self, tx_id: int) -> int:
-        return 0
-
-    def rollback(self, tx_id: int) -> RollbackResult:
-        return RollbackResult.UNKNOWN_TX
-
-    def flush_log_until(self, lsn: int) -> None:
-        return None
-
-    def show_log(self, tx_id: int | None) -> list[LogRecord]:
-        return []
+    def rollback(self, tx_id: int) -> TxResult:
+        """Undo perubahan transaksi lewat RollbackManager. Dipanggil CCM.abort."""
+        return TxResult(tx_id=tx_id, status=TxStatus.FAILED, ok=False, message="belum diimplementasikan")
 
     def checkpoint(self) -> CheckpointResult:
+        """Buat checkpoint lewat CheckpointManager."""
         return CheckpointResult(ok=False, message="belum diimplementasikan")
 
-    def restore_to(
-        self,
-        target_time: datetime | None,
-        target_tx_id: int | None,
-    ) -> RestoreResult:
-        return RestoreResult(ok=False, message="belum diimplementasikan")
+    def recover(self) -> RecoveryResult:
+        """Crash recovery lewat RecoveryManager. Dipanggil main.py saat startup."""
+        return RecoveryResult(ok=True, message="belum diimplementasikan")
 
-    def recover(self) -> RecoveryReport | None:
-        return None
+    def recover_to(self, target: RecoveryTarget) -> RecoveryResult:
+        """Pemulihan ke waktu atau transaksi tertentu lewat PITRManager."""
+        return RecoveryResult(ok=False, message="belum diimplementasikan")
+
+    def read_log(self, tx_id: int | None = None) -> list[LogRecord]:
+        """Isi log lewat LogReader, bisa difilter per transaksi."""
+        return []
+
+    def set_dependencies(self, sm: StorageManager, ccm: ConcurrencyControlManager) -> None:
+        """Suntik SM dan CCM. Dipanggil main.py saat bootstrap."""
+        self._sm = sm
+        self._ccm = ccm
 
     def close(self) -> None:
+        """Tutup sumber daya FRM."""
         return None

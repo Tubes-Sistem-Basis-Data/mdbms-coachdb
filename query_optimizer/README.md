@@ -2,7 +2,7 @@
 
 Implementasi oleh group QO (Group 3).
 
-Facade: `QueryOptimizer` di `common/interfaces/query_optimizer.py`. Selama implementasi asli belum ada, komponen lain memakai `mocks/mock_query_optimizer.py`.
+Facade: `QueryOptimizer` di `common/interfaces/query_optimizer.py`.
 
 ## Requirement
 

@@ -2,7 +2,7 @@
 
 Implementasi oleh group FRM (Group 2).
 
-Facade: `FailureRecoveryManager` di `common/interfaces/failure_recovery.py`. Selama implementasi asli belum ada, komponen lain memakai `mocks/mock_failure_recovery.py`.
+Facade: `FailureRecoveryManager` di `common/interfaces/failure_recovery.py`.
 
 ## Requirement
 

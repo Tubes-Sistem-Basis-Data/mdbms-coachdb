@@ -8,7 +8,7 @@ Setiap perubahan pada `common/` atau `common/interfaces/` dicatat di sini: tangg
 
 - Shared data type di `common/` (catalog, storage, expression, plan, transaction, log, result, errors) dan konfigurasi default di `common/config.py`.
 - ABC kelima facade di `common/interfaces/`: `QueryProcessor` (+ `Session`), `QueryOptimizer`, `StorageManager`, `ConcurrencyControlManager`, `FailureRecoveryManager`.
-- Mock kelima facade di `mocks/` dan uji kontrak di `tests/test_contract.py`.
+- Facade tiap komponen berupa mock (semua method mengembalikan tipe sesuai kontrak) dan uji kontrak di `tests/test_contract.py`.
 
 ### Tambahan terhadap draf kontrak
 

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import threading
 
-from common.log import CheckpointResult, RecoveryTarget, RestoreResult
+from common.log import CheckpointResult, RecoveryTarget
+from failure_recovery.results import RestoreResult
 from failure_recovery.ports import (
     CheckpointInterface,
     CheckpointQueryInterface,

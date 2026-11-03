@@ -42,11 +42,3 @@ class StorageError(MdbmsError):
 
 class LogError(MdbmsError):
     """Kegagalan operasi log."""
-
-
-class LogWriteError(LogError):
-    """Kegagalan menulis catatan log."""
-
-
-class RecoveryError(MdbmsError):
-    """Kegagalan proses recovery."""

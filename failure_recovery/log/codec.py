@@ -6,7 +6,7 @@ from pathlib import Path
 
 from common import config
 from common.log import LogRecord
-from common.transaction import RECORD_ABSENT
+from common.transaction import NO_RECORD
 
 _LOG_PATH = Path(config.DATA_DIR) / "wal.log"
 
@@ -21,14 +21,14 @@ def get_log_path() -> Path:
 
 
 def _encode_image(value) -> list | None:
-    if value is RECORD_ABSENT:
+    if value is NO_RECORD:
         return None
     return list(value)
 
 
 def _decode_image(value) -> tuple | object:
     if value is None:
-        return RECORD_ABSENT
+        return NO_RECORD
     return tuple(value)
 
 
