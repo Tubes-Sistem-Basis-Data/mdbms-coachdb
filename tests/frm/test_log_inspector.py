@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from common.log import LogKind, LogRecord
 from common.storage import RID
 from common.transaction import NO_RECORD, ChangeOp, DataChange
+from failure_recovery import FailureRecoveryManager
 from failure_recovery.log import codec
 from failure_recovery.log.log_inspector import LogInspector
+from failure_recovery.log.log_reader import LogReader
 
 
 def _data_record(tx_id: int, lsn: int) -> LogRecord:
@@ -78,6 +82,36 @@ class TestDisplay(DisplayTestCase):
     def test_record_tidak_valid_dilewati(self):
         baris = self._baris([LogRecord(LogKind.BEGIN, tx_id=1, lsn=1), "rusak"])
         self.assertEqual(len(baris), 1)
+
+
+class TestFilterByTx(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "wal.log"
+        self.frm = FailureRecoveryManager(log_path=str(self.path))
+        self.addCleanup(self.frm.close)
+        self.inspector = LogInspector(LogReader(str(self.path)))
+
+    def test_hanya_catatan_transaksi_itu(self):
+        self.frm.write_log(LogRecord(LogKind.BEGIN, tx_id=1))
+        self.frm.write_log(LogRecord(LogKind.BEGIN, tx_id=2))
+        self.frm.write_log(LogRecord(LogKind.COMMIT, tx_id=1))
+        records = self.inspector.filter_by_tx(1)
+        self.assertEqual([r.kind for r in records], [LogKind.BEGIN, LogKind.COMMIT])
+        self.assertEqual([r.lsn for r in records], [1, 3])
+
+    def test_transaksi_tidak_ada_kembali_kosong(self):
+        self.frm.write_log(LogRecord(LogKind.BEGIN, tx_id=1))
+        self.assertEqual(self.inspector.filter_by_tx(99), [])
+
+    def test_filter_lalu_display(self):
+        self.frm.write_log(LogRecord(LogKind.BEGIN, tx_id=5))
+        self.frm.write_log(LogRecord(LogKind.COMMIT, tx_id=5))
+        output = self.inspector.display(self.inspector.filter_by_tx(5))
+        baris = [json.loads(b) for b in output.splitlines()]
+        self.assertEqual([b["kind"] for b in baris], ["BEGIN", "COMMIT"])
+        self.assertTrue(all(b["tx_id"] == 5 for b in baris))
 
 
 if __name__ == "__main__":
