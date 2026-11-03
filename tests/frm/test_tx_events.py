@@ -37,6 +37,9 @@ class TxEventTestCase(unittest.TestCase):
     def _kinds(self, tx_id: int | None = None) -> list[LogKind]:
         return [record.kind for record in self.frm.read_log(tx_id)]
 
+    def _lsns(self, tx_id: int | None = None) -> list[int]:
+        return [record.lsn for record in self.frm.read_log(tx_id)]
+
 
 class TestAlurSatuTransaksi(TxEventTestCase):
     def test_urutan_begin_data_commit(self):
@@ -47,7 +50,7 @@ class TestAlurSatuTransaksi(TxEventTestCase):
             self._kinds(1),
             [LogKind.BEGIN, LogKind.DATA, LogKind.COMMIT],
         )
-        self.assertEqual([r.lsn for r in self.frm.read_log(1)], [1, 2, 3])
+        self.assertEqual(self._lsns(1), [1, 2, 3])
 
     def test_lsn_event_berurutan_dari_satu(self):
         self.assertEqual(self.frm.write_log(LogRecord(LogKind.BEGIN, tx_id=1)).lsn, 1)
@@ -64,7 +67,7 @@ class TestAlurAbort(TxEventTestCase):
             self._kinds(7),
             [LogKind.BEGIN, LogKind.ABORT_REQUEST, LogKind.ABORT],
         )
-        self.assertEqual([r.lsn for r in self.frm.read_log(7)], [1, 2, 3])
+        self.assertEqual(self._lsns(7), [1, 2, 3])
 
 
 class TestPolaFlushCommit(TxEventTestCase):
@@ -106,18 +109,20 @@ class TestTransaksiBersisikan(TxEventTestCase):
             self._kinds(2),
             [LogKind.BEGIN, LogKind.DATA, LogKind.COMMIT],
         )
-        self.assertEqual([r.lsn for r in self.frm.read_log(1)], [1, 3, 4])
-        self.assertEqual([r.lsn for r in self.frm.read_log(2)], [2, 5, 6])
+        self.assertEqual(self._lsns(1), [1, 3, 4])
+        self.assertEqual(self._lsns(2), [2, 5, 6])
 
-    def test_backward_scan_transaksi_menurun(self):
+    def test_abort_transaksi_bersisikan_terpisah(self):
+        # backward_scan sendiri teruji di test_log_reader.py; di sini cukup
+        # memastikan read_log memisahkan event abort per transaksi.
         self.frm.write_log(LogRecord(LogKind.BEGIN, tx_id=1))
         self.frm.write_log(LogRecord(LogKind.BEGIN, tx_id=2))
         self.frm.write_log(LogRecord(LogKind.COMMIT, tx_id=1))
         self.frm.write_log(LogRecord(LogKind.ABORT_REQUEST, tx_id=2))
         self.frm.write_log(LogRecord(LogKind.ABORT, tx_id=2))
-        self.assertEqual([r.lsn for r in self.frm.read_log(2)], [2, 4, 5])
-        self.assertEqual([r.lsn for r in self.frm._log_reader.backward_scan(2)], [5, 4, 2])
-        self.assertEqual([r.lsn for r in self.frm._log_reader.backward_scan(1)], [3, 1])
+        self.assertEqual(self._kinds(2), [LogKind.BEGIN, LogKind.ABORT_REQUEST, LogKind.ABORT])
+        self.assertEqual(self._lsns(1), [1, 3])
+        self.assertEqual(self._lsns(2), [2, 4, 5])
 
 
 class TestPersistensiEvent(TxEventTestCase):
