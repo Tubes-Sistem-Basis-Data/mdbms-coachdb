@@ -32,16 +32,21 @@ def _data_record(tx_id: int, lsn: int) -> LogRecord:
     )
 
 
-class DisplayTestCase(unittest.TestCase):
+class InspectorTestCase(unittest.TestCase):
     def setUp(self):
-        self.inspector = LogInspector()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "wal.log"
+        self.frm = FailureRecoveryManager(log_path=str(self.path))
+        self.addCleanup(self.frm.close)
+        self.inspector = LogInspector(LogReader(str(self.path)))
 
     def _baris(self, records: list[LogRecord]) -> list[str]:
         output = self.inspector.display(records)
         return output.splitlines() if output else []
 
 
-class TestDisplay(DisplayTestCase):
+class TestDisplay(InspectorTestCase):
     def test_json_per_baris_untuk_semua_log_kind(self):
         records = [
             LogRecord(LogKind.BEGIN, tx_id=1, lsn=1, timestamp=1.0),
@@ -63,9 +68,26 @@ class TestDisplay(DisplayTestCase):
         records = [
             LogRecord(LogKind.BEGIN, tx_id=9, lsn=1, timestamp=1.5),
             _data_record(9, 2),
+            LogRecord(LogKind.CHECKPOINT_BEGIN, lsn=3, timestamp=3.0),
         ]
         for baris_teks, asli in zip(self._baris(records), records):
             self.assertEqual(codec.parse(baris_teks), asli)
+
+    def test_null_untuk_tanpa_perubahan_dan_tanpa_transaksi(self):
+        records = [
+            LogRecord(LogKind.BEGIN, tx_id=1, lsn=1),
+            LogRecord(LogKind.CHECKPOINT_BEGIN, lsn=2),
+            _data_record(1, 3),
+        ]
+        payloads = [json.loads(b) for b in self._baris(records)]
+        # BEGIN punya transaksi tapi tanpa perubahan; CHECKPOINT tanpa keduanya;
+        # DATA punya change tapi before-nya NO_RECORD.
+        self.assertIsNone(payloads[0]["change"])
+        self.assertEqual(payloads[0]["tx_id"], 1)
+        self.assertIsNone(payloads[1]["tx_id"])
+        self.assertIsNone(payloads[1]["change"])
+        self.assertIsNotNone(payloads[2]["change"])
+        self.assertIsNone(payloads[2]["change"]["before"])
 
     def test_urutan_lsn_dipertahankan(self):
         records = [
@@ -83,16 +105,16 @@ class TestDisplay(DisplayTestCase):
         baris = self._baris([LogRecord(LogKind.BEGIN, tx_id=1, lsn=1), "rusak"])
         self.assertEqual(len(baris), 1)
 
+    def test_integrasi_dari_facade_read_log(self):
+        self.frm.write_log(LogRecord(LogKind.BEGIN, tx_id=3))
+        self.frm.write_log(_data_record(3, 2))
+        self.frm.write_log(LogRecord(LogKind.COMMIT, tx_id=3))
+        payloads = [json.loads(b) for b in self.inspector.display(self.frm.read_log()).splitlines()]
+        self.assertEqual([p["kind"] for p in payloads], ["BEGIN", "DATA", "COMMIT"])
+        self.assertEqual([p["lsn"] for p in payloads], [1, 2, 3])
 
-class TestFilterByTx(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.path = Path(self._tmp.name) / "wal.log"
-        self.frm = FailureRecoveryManager(log_path=str(self.path))
-        self.addCleanup(self.frm.close)
-        self.inspector = LogInspector(LogReader(str(self.path)))
 
+class TestFilterByTx(InspectorTestCase):
     def test_hanya_catatan_transaksi_itu(self):
         self.frm.write_log(LogRecord(LogKind.BEGIN, tx_id=1))
         self.frm.write_log(LogRecord(LogKind.BEGIN, tx_id=2))
