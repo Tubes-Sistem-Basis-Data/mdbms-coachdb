@@ -48,7 +48,7 @@ class QueryOptimizerFacade(QueryOptimizer):
 
     def get_cost(self, plan: PlanNode) -> float:
         """Hitung biaya plan dalam transfer blok."""
-        return 0.0
+        return self._cost_model.get_cost(plan)
 
     def explain(self, query: ParsedQuery) -> str:
         """Tampilkan plan untuk perintah EXPLAIN."""
