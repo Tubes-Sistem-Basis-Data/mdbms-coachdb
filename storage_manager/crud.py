@@ -14,6 +14,7 @@ from storage_manager.serializer import RecordCodec
 from storage_manager.types import LSN, Value
 
 if TYPE_CHECKING:
+    from common.catalog import TableSchema
     from storage_manager.buffer import BufferPool
     from storage_manager.catalog import Catalog
     from storage_manager.index import IndexManager
@@ -145,13 +146,56 @@ class RecordManager:
             self._stats.on_insert(table)
 
     def update(self, table: str, rid: RID, values: tuple[Value, ...], lsn: LSN) -> None:
-        return None
+        schema = self._catalog.get_table_schema(table)
+        normalized = RecordCodec.validate(schema, values)
+        self._check_primary_key(table, normalized, rid)
+        data = RecordCodec.encode(schema, normalized)
+        changed = False
+        old_values: tuple[Value, ...] = ()
+        with self._lock:
+            try:
+                frame = self._buffer.get_page(table, rid.page_id)
+            except StorageError:
+                return
+            try:
+                existing = SlottedPage.read_slot(frame.data, rid.slot)
+                # Slot tombstone/kosong: no-op sementara (lihat SM1_TASKS.md).
+                if existing is not None and existing != data:
+                    old_values = tuple(RecordCodec.decode(schema, existing))
+                    SlottedPage.write_slot(frame.data, rid.slot, data)
+                    SlottedPage.set_page_lsn(frame.data, lsn)
+                    changed = True
+            except Exception:
+                self._buffer.unpin(frame, False)
+                raise
+            self._buffer.unpin(frame, changed, lsn)
+        if not changed:
+            return
+        if self._indexed_columns_changed(table, schema, old_values, normalized):
+            self._index_manager.on_update(table, old_values, normalized, rid)
+        self._stats.invalidate(table)
 
     def delete(self, table: str, rid: RID, lsn: LSN) -> None:
         return None
 
     def truncate(self, table: str) -> int:
         return 0
+
+    def _indexed_columns_changed(
+        self,
+        table: str,
+        schema: TableSchema,
+        old_values: tuple[Value, ...],
+        new_values: tuple[Value, ...],
+    ) -> bool:
+        names = schema.column_names()
+        for info in self._catalog.list_indexes(table):
+            if info.column not in names:
+                continue
+            position = schema.column_index(info.column)
+            if old_values[position] != new_values[position]:
+                return True
+        return False
 
     def _check_primary_key(
         self,
