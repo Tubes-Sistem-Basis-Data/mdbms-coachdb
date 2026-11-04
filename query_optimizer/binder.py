@@ -1,9 +1,46 @@
-"""Validasi nama tabel dan kolom terhadap katalog SM."""
-
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
+from math import isfinite
+
+from common.catalog import ColumnSchema, DataType, IndexInfo, IndexKind, TableSchema
+from common.errors import SemanticError
+from common.expression import And, ArithOp, BinaryOp, ColumnRef, Comparison, CompOp, Expression, Literal
 from common.interfaces import StorageManager
-from common.plan import ParsedQuery
+from common.plan import (
+    CreateIndex, Delete, Filter, IndexScan, Insert, Join, JoinKind, ParsedQuery,
+    PlanNode, Project, QueryKind, Sort, TableScan, Update,
+)
+
+
+_NUMERIC = (DataType.INTEGER, DataType.FLOAT)
+_TEXT = (DataType.CHAR, DataType.VARCHAR)
+_ARITY = {
+    TableScan: 0, IndexScan: 0, Filter: 1, Project: 1, Join: 2, Sort: 1,
+    Insert: 0, Update: 1, Delete: 1, CreateIndex: 0,
+}
+_ROW_NODES = (TableScan, IndexScan, Filter, Project, Join, Sort)
+
+
+@dataclass(frozen=True)
+class _BoundColumn:
+    table: str
+    schema: ColumnSchema
+    qualifiers: tuple[str, ...]
+
+    def ref(self) -> ColumnRef:
+        return ColumnRef(self.table, self.schema.name)
+
+
+def _compatible(left: DataType, right: DataType) -> bool:
+    return (left in _NUMERIC and right in _NUMERIC) or (left in _TEXT and right in _TEXT)
+
+
+def _source_tables(node: PlanNode) -> set[str]:
+    """Asal tabel tetap ada walaupun kolomnya dibuang oleh Project."""
+    if isinstance(node, (TableScan, IndexScan)):
+        return {node.table}
+    return {table for child in node.children for table in _source_tables(child)}
 
 
 class Binder:
@@ -13,10 +50,239 @@ class Binder:
         self._catalog = catalog
 
     def bind(self, query: ParsedQuery) -> ParsedQuery:
-        """Cek tabel dan kolom ada di katalog, raise SemanticError jika tidak."""
+        """Validasi dan isi plan di tempat katalog dibaca ulang untuk setiap query
+
+        Hanya memakai get_schema dari facade SM. Error katalog, termasuk turunan
+        SemanticError seperti TableNotFoundError, diteruskan ke pemanggil.
+        """
+        if query.plan is None:
+            if query.kind is QueryKind.TRANSACTION:
+                return query
+            raise SemanticError("Query data membutuhkan plan")
+        if self._catalog is None:
+            raise SemanticError("Binder membutuhkan katalog StorageManager")
+        try:
+            self._bind_plan(query.plan, {}, set())
+        except RecursionError as exc:
+            raise SemanticError("Pohon plan atau ekspresi terlalu dalam") from exc
         return query
 
+    def _schema(self, table: str, schemas: dict[str, TableSchema]) -> TableSchema:
+        if table not in schemas:
+            assert self._catalog is not None
+            schemas[table] = self._catalog.get_schema(table)
+        return schemas[table]
 
-def bind_query(query: ParsedQuery) -> ParsedQuery:
-    """Cek tabel dan kolom di query ada di katalog (QO-07)."""
-    return query
+    def _bind_plan(
+        self, node: PlanNode, schemas: dict[str, TableSchema], active: set[int],
+    ) -> list[_BoundColumn]:
+        arity = _ARITY.get(type(node))
+        if arity is None:
+            raise SemanticError(f"Node plan '{type(node).__name__}' tidak didukung binder")
+        if id(node) in active:
+            raise SemanticError("Pohon plan mengandung siklus")
+        if len(node.children) != arity:
+            raise SemanticError(f"{type(node).__name__} membutuhkan {arity} anak")
+        if any(type(child) not in _ROW_NODES for child in node.children):
+            raise SemanticError("Anak operator harus menghasilkan baris")
+        active.add(id(node))
+        try:
+            children = [self._bind_plan(child, schemas, active) for child in node.children]
+            if isinstance(node, (TableScan, IndexScan)):
+                schema = self._schema(node.table, schemas)
+                output = [_BoundColumn(node.table, col, (node.table,)) for col in schema.columns]
+                if isinstance(node, IndexScan):
+                    self._bind_index_scan(node, schema, output)
+            elif isinstance(node, (Insert, Update, Delete, CreateIndex)):
+                self._bind_write(node, children, schemas)
+                output = []
+            elif isinstance(node, Join):
+                left, right = children
+                if _source_tables(node.children[0]) & _source_tables(node.children[1]):
+                    raise SemanticError("Tabel berulang membutuhkan alias yang belum didukung")
+                output = left + right
+                if node.kind is JoinKind.THETA:
+                    self._bind_condition(node.condition, output)
+                elif node.kind in (JoinKind.CROSS, JoinKind.NATURAL):
+                    if node.condition is not None:
+                        raise SemanticError("Join CROSS/NATURAL tidak menerima kondisi ON")
+                    if node.kind is JoinKind.NATURAL:
+                        output = self._natural_columns(left, right)
+                else:
+                    raise SemanticError("Jenis join tidak dikenal")
+            else:
+                output = children[0]
+                if isinstance(node, Filter):
+                    self._bind_condition(node.condition, output)
+                elif isinstance(node, Sort):
+                    self._resolve(node.column, output)
+                elif isinstance(node, Project):
+                    if not node.columns:
+                        node.columns = [col.ref() for col in output]
+                    output = [self._resolve(ref, output) for ref in node.columns]
+            node.output_columns = [col.ref() for col in output]
+            return output
+        finally:
+            active.remove(id(node))
+
+    def _bind_write(
+        self, node: PlanNode, children: list[list[_BoundColumn]], schemas: dict[str, TableSchema],
+    ) -> None:
+        table = node.index.table if isinstance(node, CreateIndex) else node.table
+        schema = self._schema(table, schemas)
+        scope = [_BoundColumn(table, col, (table,)) for col in schema.columns]
+        if isinstance(node, CreateIndex):
+            self._validate_index(node.index, scope)
+            if any(index.name == node.index.name or index.column == node.index.column for index in schema.indexes):
+                raise SemanticError("Nama index atau kolom yang diindeks sudah terdaftar", node.index.name)
+        elif isinstance(node, Insert):
+            if len(node.values) != len(schema.columns):
+                raise SemanticError("Jumlah nilai INSERT tidak sesuai skema tabel", table)
+            for value, column in zip(node.values, schema.columns):
+                if not isinstance(value, Literal):
+                    raise SemanticError("INSERT hanya menerima nilai literal")
+                self._check_assignment(column, self._bind_value(value, []), value)
+        else:
+            source = node.children[0]
+            while isinstance(source, Filter):
+                source = source.children[0]
+            if not isinstance(source, (TableScan, IndexScan)) or source.table != table:
+                raise SemanticError("Sumber UPDATE/DELETE harus scan tabel target dengan Filter opsional", table)
+            if isinstance(node, Update):
+                column = self._resolve(ColumnRef(table, node.column), scope).schema
+                value_type = self._bind_value(node.expression, children[0])
+                self._check_assignment(column, value_type, node.expression)
+
+    def _check_assignment(self, column: ColumnSchema, value_type: DataType, expr: Expression) -> None:
+        if isinstance(expr, Literal) and expr.value is None:
+            if not column.nullable:
+                raise SemanticError(f"Kolom '{column.name}' tidak menerima NULL", column.name)
+            return
+        if not _compatible(column.type, value_type) or (column.type is DataType.INTEGER and value_type is DataType.FLOAT):
+            raise SemanticError(f"Tipe nilai tidak sesuai kolom '{column.name}'", column.name)
+        if (
+            isinstance(expr, Literal) and isinstance(expr.value, str)
+            and column.length is not None and len(expr.value) > column.length
+        ):
+            raise SemanticError(f"Nilai melampaui panjang kolom '{column.name}'", column.name)
+
+    def _validate_index(self, index: IndexInfo, scope: list[_BoundColumn]) -> _BoundColumn:
+        if not index.name.strip() or not isinstance(index.kind, IndexKind):
+            raise SemanticError("Nama atau jenis index tidak valid", index.name)
+        return self._resolve(ColumnRef(index.table, index.column), scope)
+
+    def _bind_index_scan(self, node: IndexScan, schema: TableSchema, scope: list[_BoundColumn]) -> None:
+        column = self._validate_index(node.index, scope)
+        if node.index.table != node.table or node.index not in schema.indexes:
+            raise SemanticError("Metadata IndexScan tidak sesuai katalog", node.index.name)
+        if node.op not in (CompOp.EQ, CompOp.GT, CompOp.GE, CompOp.LT, CompOp.LE):
+            raise SemanticError("Operator IndexScan tidak didukung")
+        if node.index.kind is IndexKind.HASH and node.op is not CompOp.EQ:
+            raise SemanticError("Index HASH hanya mendukung kesamaan")
+        if node.op is CompOp.EQ:
+            if node.low is not None or node.high is not None:
+                raise SemanticError("IndexScan kesamaan memakai key, bukan low/high")
+            values = [node.key]
+        else:
+            bound = node.low if node.op in (CompOp.GT, CompOp.GE) else node.high
+            if node.key is not None or bound is None:
+                raise SemanticError("IndexScan rentang membutuhkan batas low/high yang sesuai")
+            values = [node.low, node.high]
+        for value in values:
+            if value is None:
+                continue
+            value_type = {int: DataType.INTEGER, float: DataType.FLOAT, str: DataType.VARCHAR}.get(type(value))
+            if value_type is None:
+                raise SemanticError("Tipe kunci index tidak valid")
+            self._bind_value(Literal(value, value_type), [])
+            if not _compatible(column.schema.type, value_type):
+                raise SemanticError("Tipe kunci index tidak sesuai kolom", node.index.column)
+
+    def _natural_columns(
+        self, left: list[_BoundColumn], right: list[_BoundColumn],
+    ) -> list[_BoundColumn]:
+        output = list(left)
+        for column in right:
+            matches = [i for i, col in enumerate(left) if col.schema.name == column.schema.name]
+            if not matches:
+                output.append(column)
+                continue
+            if len(matches) != 1 or sum(c.schema.name == column.schema.name for c in right) != 1:
+                raise SemanticError(f"Kolom NATURAL JOIN '{column.schema.name}' ambigu", column.schema.name)
+            pos = matches[0]
+            original = output[pos]
+            if not _compatible(original.schema.type, column.schema.type):
+                raise SemanticError(f"Tipe kolom NATURAL JOIN '{column.schema.name}' tidak kompatibel")
+            output[pos] = replace(original, qualifiers=original.qualifiers + column.qualifiers)
+        return output
+
+    def _resolve(self, ref: ColumnRef, scope: list[_BoundColumn]) -> _BoundColumn:
+        matches = [
+            col for col in scope
+            if col.schema.name == ref.column and (ref.table is None or ref.table in col.qualifiers)
+        ]
+        name = f"{ref.table}.{ref.column}" if ref.table else ref.column
+        if not matches:
+            raise SemanticError(f"Kolom '{name}' tidak ditemukan dalam scope query", name)
+        if len(matches) != 1:
+            raise SemanticError(f"Kolom '{name}' ambigu", name)
+        ref.table = matches[0].table
+        return matches[0]
+
+    def _bind_condition(
+        self, expr: Expression, scope: list[_BoundColumn], active: set[int] | None = None,
+    ) -> None:
+        if active is None:
+            active = set()
+        if id(expr) in active:
+            raise SemanticError("Pohon ekspresi mengandung siklus")
+        active.add(id(expr))
+        try:
+            if isinstance(expr, Comparison) and isinstance(expr.op, CompOp):
+                left = self._bind_value(expr.left, scope, active)
+                right = self._bind_value(expr.right, scope, active)
+                if not _compatible(left, right):
+                    raise SemanticError("Tipe operand perbandingan tidak kompatibel")
+            elif isinstance(expr, And) and expr.conditions:
+                for condition in expr.conditions:
+                    self._bind_condition(condition, scope, active)
+            else:
+                raise SemanticError("Kondisi harus berupa perbandingan atau AND")
+        finally:
+            active.remove(id(expr))
+
+    def _bind_value(
+        self, expr: Expression, scope: list[_BoundColumn], active: set[int] | None = None,
+    ) -> DataType:
+        if active is None:
+            active = set()
+        if id(expr) in active:
+            raise SemanticError("Pohon ekspresi mengandung siklus")
+        active.add(id(expr))
+        try:
+            if isinstance(expr, ColumnRef):
+                return self._resolve(expr, scope).schema.type
+            if isinstance(expr, Literal):
+                if not isinstance(expr.type, DataType):
+                    raise SemanticError("Tipe literal tidak dikenal")
+                if expr.value is not None:
+                    expected = (int,) if expr.type is DataType.INTEGER else (int, float) if expr.type is DataType.FLOAT else (str,)
+                    if type(expr.value) not in expected:
+                        raise SemanticError("Nilai literal tidak sesuai tipe yang dinyatakan")
+                    if type(expr.value) is float and not isfinite(expr.value):
+                        raise SemanticError("Nilai FLOAT harus berhingga")
+                return expr.type
+            if isinstance(expr, BinaryOp) and isinstance(expr.op, ArithOp):
+                left = self._bind_value(expr.left, scope, active)
+                right = self._bind_value(expr.right, scope, active)
+                if left not in _NUMERIC or right not in _NUMERIC:
+                    raise SemanticError("Operasi aritmetika hanya menerima angka")
+                return DataType.FLOAT if DataType.FLOAT in (left, right) else DataType.INTEGER
+            raise SemanticError(f"Ekspresi '{type(expr).__name__}' tidak didukung")
+        finally:
+            active.remove(id(expr))
+
+
+def bind_query(query: ParsedQuery, catalog: StorageManager | None = None) -> ParsedQuery:
+    """Shortcut Binder(catalog).bind(query) (query data wajib memiliki katalog)"""
+    return Binder(catalog).bind(query)
