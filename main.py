@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from client import ClientCLI
 from common import config
 from common.interfaces import QueryProcessor
 from common.result import ExecutionResult
@@ -13,6 +14,8 @@ from concurrency_control import CCManager
 from failure_recovery import FailureRecoveryManager
 from query_optimizer import QueryOptimizerFacade
 from query_processor.facade import QueryProcessorFacade
+from query_processor.result import ResultFormatter
+from query_processor.server import QueryServer
 from storage_manager.facade import StorageManager
 
 PROTOCOLS = {"lock": ProtocolType.LOCK_BASED, "timestamp": ProtocolType.TIMESTAMP_BASED}
@@ -27,14 +30,24 @@ DEMO_QUERIES = [
     "SELECT name FROM student;",
 ]
 
+_FORMATTER = ResultFormatter()
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Argumen baris perintah."""
     parser = argparse.ArgumentParser(description="mDBMS CoachDB")
-    parser.add_argument("--protocol", choices=sorted(PROTOCOLS), default=config.DEFAULT_PROTOCOL,
-                        help="protokol concurrency control")
+    parser.add_argument(
+        "--protocol",
+        choices=sorted(PROTOCOLS),
+        default=config.DEFAULT_PROTOCOL,
+        help="protokol concurrency control",
+    )
     parser.add_argument("--data-dir", default=config.DATA_DIR, help="direktori data")
+    parser.add_argument("--host", default=config.HOST, help="alamat host server TCP")
+    parser.add_argument("--port", type=int, default=config.PORT, help="port server TCP")
     parser.add_argument("--demo", action="store_true", help="jalankan query contoh lalu keluar")
+    parser.add_argument("--cli", action="store_true", help="jalankan REPL CLI interaktif lokal")
+    parser.add_argument("--serve", action="store_true", help="jalankan server TCP multi-client")
     return parser.parse_args(argv)
 
 
@@ -60,28 +73,19 @@ def bootstrap(args: argparse.Namespace) -> QueryProcessor:
 
 
 def print_result(sql: str, result: ExecutionResult) -> None:
-    """Cetak ExecutionResult dalam bentuk tabel sederhana."""
+    """Cetak ExecutionResult dalam bentuk tabel/pesan lewat ResultFormatter."""
     print(f"\n> {sql}")
-    if not result.ok:
-        print(f"ERROR: {result.message}")
-        return
-    if result.columns:
-        table = [result.columns] + [["NULL" if v is None else str(v) for v in r] for r in result.rows]
-        widths = [max(len(row[i]) for row in table) for i in range(len(result.columns))]
-        for i, row in enumerate(table):
-            print(" | ".join(v.ljust(w) for v, w in zip(row, widths)))
-            if i == 0:
-                print("-+-".join("-" * w for w in widths))
-    if result.message:
-        print(result.message)
+    print(_FORMATTER.format(result))
 
 
 def run_demo(qp: QueryProcessor) -> None:
     """Jalankan DEMO_QUERIES dalam satu sesi."""
     session = qp.open_session()
-    for sql in DEMO_QUERIES:
-        print_result(sql, qp.execute_query(sql, session))
-    qp.close_session(session.session_id)
+    try:
+        for sql in DEMO_QUERIES:
+            print_result(sql, qp.execute_query(sql, session))
+    finally:
+        qp.close_session(session.session_id)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -90,8 +94,17 @@ def main(argv: list[str] | None = None) -> None:
     qp = bootstrap(args)
     if args.demo:
         run_demo(qp)
+    elif args.cli:
+        ClientCLI(qp=qp).run()
+    elif args.serve:
+        server = QueryServer(qp, host=args.host, port=args.port)
+        print(f"Server CoachDB mendengarkan di {args.host}:{server.port}")
+        try:
+            server.serve()
+        except KeyboardInterrupt:
+            server.shutdown()
     else:
-        print("Bootstrap selesai. Server dan CLI disediakan group QP; pakai --demo untuk contoh query.")
+        print("Bootstrap selesai. Gunakan --demo, --cli, atau --serve.")
 
 
 if __name__ == "__main__":
