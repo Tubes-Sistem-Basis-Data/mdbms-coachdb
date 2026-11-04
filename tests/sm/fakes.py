@@ -61,6 +61,12 @@ class FakeSlottedPage:
         buf[STATUS_OFFSET + slot] = SlotStatus.TOMBSTONE.value
 
     @staticmethod
+    def slot_status(buf: bytearray, slot: int) -> SlotStatus:
+        if slot < 0 or slot >= MAX_SLOTS:
+            return SlotStatus.EMPTY
+        return SlotStatus(buf[STATUS_OFFSET + slot])
+
+    @staticmethod
     def first_never_used_slot(buf: bytearray) -> int | None:
         for slot in range(MAX_SLOTS):
             if buf[STATUS_OFFSET + slot] == SlotStatus.EMPTY.value:
