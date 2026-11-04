@@ -192,10 +192,59 @@ class RecordManager:
         self._stats.invalidate(table)
 
     def delete(self, table: str, rid: RID, lsn: LSN) -> None:
-        return None
+        schema = self._catalog.get_table_schema(table)
+        values: tuple[Value, ...] | None = None
+        with self._lock:
+            try:
+                frame = self._buffer.get_page(table, rid.page_id)
+            except StorageError:
+                return
+            try:
+                data = SlottedPage.read_slot(frame.data, rid.slot)
+                if data is not None:
+                    values = tuple(RecordCodec.decode(schema, data))
+                    SlottedPage.mark_tombstone(frame.data, rid.slot)
+                    SlottedPage.set_page_lsn(frame.data, lsn)
+            except Exception:
+                self._buffer.unpin(frame, False)
+                raise
+            self._buffer.unpin(frame, values is not None, lsn)
+        if values is None:
+            return
+        self._index_manager.on_delete(table, values, rid)
+        self._stats.on_delete(table)
+        self._stats.invalidate(table)
 
-    def truncate(self, table: str) -> int:
-        return 0
+    def truncate(self, table: str, lsn: LSN = 0) -> int:
+        schema = self._catalog.get_table_schema(table)
+        page_count = self._buffer._disk.num_pages(table)
+        removed = 0
+        for page_id in range(page_count):
+            deleted: list[tuple[RID, tuple[Value, ...]]] = []
+            with self._lock:
+                frame = self._buffer.get_page(table, page_id)
+                try:
+                    header = SlottedPage.read_header(frame.data)
+                    for slot in range(header.slot_count):
+                        data = SlottedPage.read_slot(frame.data, slot)
+                        if data is None:
+                            continue
+                        deleted.append(
+                            (RID(table, page_id, slot), tuple(RecordCodec.decode(schema, data)))
+                        )
+                        SlottedPage.mark_tombstone(frame.data, slot)
+                    if deleted:
+                        SlottedPage.set_page_lsn(frame.data, lsn)
+                except Exception:
+                    self._buffer.unpin(frame, False)
+                    raise
+                self._buffer.unpin(frame, bool(deleted), lsn)
+            removed += len(deleted)
+            for rid, values in deleted:
+                self._index_manager.on_delete(table, values, rid)
+        if removed:
+            self._stats.invalidate(table)
+        return removed
 
     def _indexed_columns_changed(
         self,
