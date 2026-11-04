@@ -1,5 +1,3 @@
-"""Pemformat hasil eksekusi query dan pesan error untuk CLI (QP-01)."""
-
 from __future__ import annotations
 
 from common.errors import (
@@ -18,11 +16,8 @@ __all__ = ["ExecutionResult", "QueryResult", "ResultFormatter"]
 
 
 class ResultFormatter:
-    """Memformat ExecutionResult dan exception menjadi teks ramah tanpa stack trace."""
-
     @staticmethod
     def format_value(value: object) -> str:
-        """Ubah satu nilai sel menjadi representasi tampilan tabel."""
         if value is None:
             return "NULL"
         if isinstance(value, float):
@@ -30,7 +25,6 @@ class ResultFormatter:
         return str(value)
 
     def format(self, result: ExecutionResult) -> str:
-        """Format ExecutionResult menjadi tabel ASCII (SELECT) atau pesan status/error."""
         if not result.ok:
             return self.format_error(result.message)
 
@@ -72,7 +66,6 @@ class ResultFormatter:
         return f"{result.affected_rows} baris terpengaruh"
 
     def format_error(self, error: Exception | str) -> str:
-        """Format exception atau pesan gagal menjadi string ERROR ramah."""
         if isinstance(error, QuerySyntaxError):
             return self._ensure_prefix(error.message, "ERROR [SYNTAX]")
         if isinstance(error, SemanticError):

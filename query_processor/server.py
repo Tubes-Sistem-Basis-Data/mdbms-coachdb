@@ -1,5 +1,3 @@
-"""Server TCP multi-koneksi Query Processor (QP-01 & QP-02)."""
-
 from __future__ import annotations
 
 import json
@@ -15,8 +13,6 @@ logger = logging.getLogger("coachdb.qp")
 
 
 class QueryServer:
-    """Server TCP yang melayani banyak koneksi client secara paralel per thread/sesi."""
-
     def __init__(
         self,
         qp: QueryProcessor,
@@ -33,7 +29,6 @@ class QueryServer:
 
     @property
     def port(self) -> int:
-        """Port aktual tempat server mendengarkan koneksi."""
         if self._sock is not None:
             try:
                 return int(self._sock.getsockname()[1])
@@ -42,7 +37,6 @@ class QueryServer:
         return self._port
 
     def serve(self) -> None:
-        """Buka socket TCP dan terima koneksi client hingga shutdown dipanggil."""
         server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_sock.bind((self._host, self._port))
@@ -78,7 +72,6 @@ class QueryServer:
         conn: socket.socket,
         addr: tuple[str, int] | None = None,
     ) -> None:
-        """Tangani satu koneksi client dengan satu Session terisolasi."""
         session: Session = self._qp.open_session()
         try:
             reader = conn.makefile("r", encoding="utf-8")
@@ -145,7 +138,6 @@ class QueryServer:
         conn.sendall(wire.encode("utf-8"))
 
     def shutdown(self) -> None:
-        """Hentikan loop server dan tutup socket pendengar."""
         with self._lock:
             self._running = False
             sock = self._sock

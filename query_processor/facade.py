@@ -1,5 +1,3 @@
-"""Facade utama Query Processor dan handler perintah meta (QP-01 & QP-02)."""
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -48,8 +46,6 @@ _RESTORE_TIME_RE = re.compile(
 
 
 class MetaCommandHandler:
-    """Menangani perintah meta: EXPLAIN, CHECKPOINT, SHOW LOG, dan RESTORE TO."""
-
     def __init__(
         self,
         qo: QueryOptimizer,
@@ -61,7 +57,6 @@ class MetaCommandHandler:
         self._ccm = ccm
 
     def explain(self, parsed: ParsedQuery | str) -> ExecutionResult:
-        """Jalankan EXPLAIN pada query SELECT/UPDATE/DELETE tanpa mengeksekusi plan."""
         if isinstance(parsed, str):
             raw = parsed.strip().rstrip(";").strip()
             inner_sql = raw
@@ -88,7 +83,6 @@ class MetaCommandHandler:
         return ExecutionResult(ok=True, message=text)
 
     def checkpoint(self, session: Session) -> ExecutionResult:
-        """Jalankan CHECKPOINT di luar transaksi aktif."""
         self.require_outside_tx(session)
         if self._frm is None:
             return ExecutionResult(ok=False, message="ERROR [INTERNAL]: Failure Recovery Manager tidak tersedia")
@@ -103,7 +97,6 @@ class MetaCommandHandler:
         return ExecutionResult(ok=True, message=msg)
 
     def show_log(self, tx_id: int | None = None) -> ExecutionResult:
-        """Tampilkan catatan WAL dari Failure Recovery Manager."""
         if self._frm is None:
             return ExecutionResult(ok=False, message="ERROR [INTERNAL]: Failure Recovery Manager tidak tersedia")
 
@@ -122,7 +115,6 @@ class MetaCommandHandler:
         return ExecutionResult(ok=True, columns=columns, rows=rows)
 
     def restore(self, target: RecoveryTarget, session: Session) -> ExecutionResult:
-        """Pulihkan basis data ke target waktu atau transaksi (PITR) di luar transaksi aktif."""
         self.require_outside_tx(session)
         if self._frm is None:
             return ExecutionResult(ok=False, message="ERROR [INTERNAL]: Failure Recovery Manager tidak tersedia")
@@ -138,14 +130,11 @@ class MetaCommandHandler:
         return ExecutionResult(ok=True, message=msg)
 
     def require_outside_tx(self, session: Session) -> None:
-        """Pastikan sesi tidak sedang berada di dalam transaksi eksplisit."""
         if session.in_explicit_tx or session.tx_id is not None:
             raise MdbmsError("ERROR [TX]: Perintah ini tidak diizinkan di dalam transaksi aktif")
 
 
 class QueryProcessorFacade(QueryProcessor):
-    """Orkestrator utama eksekusi query CoachDB (implementasi kontrak QueryProcessor)."""
-
     def __init__(
         self,
         qo: QueryOptimizer,
@@ -168,17 +157,14 @@ class QueryProcessorFacade(QueryProcessor):
         self._formatter = ResultFormatter()
 
     def open_session(self) -> Session:
-        """Buka sesi baru untuk satu client."""
         return self._sessions.open_session()
 
     def close_session(self, session_id: int) -> None:
-        """Tutup sesi dan batalkan transaksi yang masih aktif pada sesi tersebut."""
         session = self._sessions.close_session(session_id)
         if session is not None and (session.tx_id is not None or session.in_explicit_tx):
             self._abort_active_tx(session, is_disconnect=True)
 
     def execute_query(self, sql: str, session: Session) -> ExecutionResult:
-        """Jalankan satu perintah SQL dalam konteks sesi tanpa melempar exception keluar."""
         if session is not None:
             self._sessions.register_session(session)
 
@@ -223,7 +209,6 @@ class QueryProcessorFacade(QueryProcessor):
             return ExecutionResult(ok=False, message=self._formatter.format_error(exc))
 
     def execute(self, session: Session, sql: str) -> ExecutionResult:
-        """Alias kompatibilitas diagram kelas (+execute(session, sql): QueryResult)."""
         return self.execute_query(sql, session)
 
     def _try_handle_meta_command(

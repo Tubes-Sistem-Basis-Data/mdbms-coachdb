@@ -1,5 +1,3 @@
-"""Bootstrap mDBMS CoachDB: susun komponen sesuai urutan startup."""
-
 from __future__ import annotations
 
 import argparse
@@ -34,7 +32,6 @@ _FORMATTER = ResultFormatter()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Argumen baris perintah."""
     parser = argparse.ArgumentParser(description="mDBMS CoachDB")
     parser.add_argument(
         "--protocol",
@@ -52,7 +49,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def bootstrap(args: argparse.Namespace) -> QueryProcessor:
-    """Bangun SM, FRM, CCM, QO, QP dan jalankan recovery. Exit 1 jika gagal."""
     sm = StorageManager(args.data_dir)
     frm = FailureRecoveryManager()
     ccm = CCManager(frm)
@@ -73,13 +69,11 @@ def bootstrap(args: argparse.Namespace) -> QueryProcessor:
 
 
 def print_result(sql: str, result: ExecutionResult) -> None:
-    """Cetak ExecutionResult dalam bentuk tabel/pesan lewat ResultFormatter."""
     print(f"\n> {sql}")
     print(_FORMATTER.format(result))
 
 
 def run_demo(qp: QueryProcessor) -> None:
-    """Jalankan DEMO_QUERIES dalam satu sesi."""
     session = qp.open_session()
     try:
         for sql in DEMO_QUERIES:
@@ -89,7 +83,6 @@ def run_demo(qp: QueryProcessor) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Entry point."""
     args = parse_args(argv)
     qp = bootstrap(args)
     if args.demo:

@@ -1,5 +1,3 @@
-"""Client CLI interaktif CoachDB (QP-01)."""
-
 from __future__ import annotations
 
 import argparse
@@ -17,15 +15,12 @@ _EXIT_COMMANDS = {"exit", "quit", "\\q"}
 
 
 class StatementSplitter:
-    """Memecah input multi-baris menjadi statement SQL utuh yang diakhiri ';' di luar string literal."""
-
     def __init__(self) -> None:
         self._buffer: str = ""
         self._in_string: bool = False
         self._quote_char: str = "'"
 
     def feed(self, text: str) -> list[str]:
-        """Masukkan satu atau beberapa baris teks, kembalikan daftar statement yang sudah selesai."""
         if not isinstance(text, str):
             return []
 
@@ -88,19 +83,15 @@ class StatementSplitter:
         return statements
 
     def has_pending(self) -> bool:
-        """True jika masih ada potongan statement yang belum diakhiri ';'."""
         return self._in_string or bool(self._buffer.strip())
 
     def reset(self) -> None:
-        """Kosongkan buffer statement dan state kutip."""
         self._buffer = ""
         self._in_string = False
         self._quote_char = "'"
 
 
 class ClientCLI:
-    """Antarmuka baris perintah (REPL) yang berkomunikasi ke QueryServer (TCP) atau QueryProcessor lokal."""
-
     PRIMARY_PROMPT = "coachdb> "
     CONTINUE_PROMPT = "    ...> "
 
@@ -126,7 +117,6 @@ class ClientCLI:
         self._pending_statements: list[str] = []
 
     def connect(self) -> None:
-        """Buka sesi lokal (jika qp diberikan) atau koneksi TCP ke QueryServer."""
         if self._qp is not None:
             if self._session is None:
                 self._session = self._qp.open_session()
@@ -139,7 +129,6 @@ class ClientCLI:
             self._reader = sock.makefile("r", encoding="utf-8")
 
     def close(self) -> None:
-        """Tutup sesi aktif atau koneksi socket."""
         if self._qp is not None and self._session is not None:
             session_id = self._session.session_id
             self._session = None
@@ -161,7 +150,6 @@ class ClientCLI:
             self._connection = None
 
     def read_statement(self) -> str | None:
-        """Baca baris demi baris hingga satu statement SQL selesai atau perintah keluar ditemukan."""
         if self._pending_statements:
             return self._pending_statements.pop(0)
 
@@ -210,7 +198,6 @@ class ClientCLI:
                 return first
 
     def send(self, sql: str) -> ExecutionResult:
-        """Kirim satu statement SQL ke QueryProcessor atau server TCP dan kembalikan ExecutionResult."""
         if self._qp is not None:
             if self._session is None:
                 self.connect()
@@ -256,7 +243,6 @@ class ClientCLI:
             )
 
     def run(self) -> None:
-        """Jalankan loop interaktif REPL hingga user keluar; error query tidak menghentikan client."""
         out_stream = self._output if self._output is not None else sys.stdout
         try:
             self.connect()
@@ -285,7 +271,6 @@ class ClientCLI:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse argumen baris perintah untuk client CLI."""
     parser = argparse.ArgumentParser(description="CoachDB Interactive CLI Client")
     parser.add_argument("--host", default=config.HOST, help="alamat host server CoachDB")
     parser.add_argument("--port", type=int, default=config.PORT, help="port TCP server CoachDB")
@@ -293,7 +278,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Entry point eksekusi langsung `python client.py`."""
     args = parse_args(argv)
     cli = ClientCLI(host=args.host, port=args.port)
     cli.run()

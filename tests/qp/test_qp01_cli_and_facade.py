@@ -1,5 +1,3 @@
-"""Unit test komprehensif untuk QP-01: Client CLI, ResultFormatter, SessionManager, dan QueryProcessorFacade."""
-
 from __future__ import annotations
 
 import io
@@ -66,7 +64,6 @@ from query_processor.server import QueryServer
 from query_processor.session import SessionManager
 from query_processor.transactions import TransactionCoordinator
 from query_processor.translator import PlanTranslator
-from query_processor.tuple import ExecRow, OutputSchema
 
 
 class _StubStorageManager(StorageManager):
