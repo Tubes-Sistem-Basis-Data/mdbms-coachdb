@@ -11,16 +11,25 @@ RECORD_SIZE = 4
 MAX_SLOTS = 8
 SLOT_COUNT_OFFSET = 0
 LSN_OFFSET = 4
-STATUS_OFFSET = 12
+RECORD_SIZE_OFFSET = 12
+STATUS_OFFSET = 16
 DATA_OFFSET = STATUS_OFFSET + MAX_SLOTS
 
 
 class FakeSlottedPage:
-    """SlottedPage minimal: satu page berisi 8 slot x 4 byte plus header LSN."""
+    """SlottedPage minimal: 8 slot per page, ukuran record mengikuti header."""
 
     @staticmethod
     def init_page(page_id: int, record_size: int) -> bytearray:
-        return bytearray(DATA_OFFSET + MAX_SLOTS * record_size)
+        buf = bytearray(DATA_OFFSET + MAX_SLOTS * record_size)
+        buf[RECORD_SIZE_OFFSET : RECORD_SIZE_OFFSET + 4] = record_size.to_bytes(
+            4, "little"
+        )
+        return buf
+
+    @staticmethod
+    def _record_size(buf: bytearray) -> int:
+        return int.from_bytes(buf[RECORD_SIZE_OFFSET : RECORD_SIZE_OFFSET + 4], "little")
 
     @staticmethod
     def read_header(buf: bytearray) -> PageHeader:
@@ -28,7 +37,7 @@ class FakeSlottedPage:
             buf[SLOT_COUNT_OFFSET : SLOT_COUNT_OFFSET + 4], "little"
         )
         page_lsn = int.from_bytes(buf[LSN_OFFSET : LSN_OFFSET + 8], "little")
-        return PageHeader(0, page_lsn, slot_count, RECORD_SIZE, 0)
+        return PageHeader(0, page_lsn, slot_count, FakeSlottedPage._record_size(buf), 0)
 
     @staticmethod
     def set_page_lsn(buf: bytearray, lsn: int) -> None:
@@ -40,8 +49,9 @@ class FakeSlottedPage:
             return None
         if buf[STATUS_OFFSET + slot] != SlotStatus.LIVE.value:
             return None
-        start = DATA_OFFSET + slot * RECORD_SIZE
-        return bytes(buf[start : start + RECORD_SIZE])
+        record_size = FakeSlottedPage._record_size(buf)
+        start = DATA_OFFSET + slot * record_size
+        return bytes(buf[start : start + record_size])
 
     @staticmethod
     def write_slot(buf: bytearray, slot: int, data: bytes) -> None:
@@ -53,8 +63,9 @@ class FakeSlottedPage:
                 4, "little"
             )
         buf[STATUS_OFFSET + slot] = SlotStatus.LIVE.value
-        start = DATA_OFFSET + slot * RECORD_SIZE
-        buf[start : start + RECORD_SIZE] = data
+        record_size = FakeSlottedPage._record_size(buf)
+        start = DATA_OFFSET + slot * record_size
+        buf[start : start + record_size] = data
 
     @staticmethod
     def mark_tombstone(buf: bytearray, slot: int) -> None:
@@ -83,11 +94,11 @@ class FakeSlottedPage:
 
 
 class FakeCodec:
-    """RecordCodec minimal untuk satu kolom INTEGER."""
+    """RecordCodec minimal: setiap kolom INTEGER 4 byte."""
 
     @staticmethod
     def record_size(columns) -> int:
-        return RECORD_SIZE
+        return 4 * len(columns)
 
     @staticmethod
     def max_record_size(schema) -> int:
@@ -99,11 +110,13 @@ class FakeCodec:
 
     @staticmethod
     def encode(schema: TableSchema, values: tuple) -> bytes:
-        return int(values[0]).to_bytes(RECORD_SIZE, "little")
+        return b"".join(int(value).to_bytes(4, "little") for value in values)
 
     @staticmethod
     def decode(schema: TableSchema, data: bytes) -> tuple:
-        return (int.from_bytes(data, "little"),)
+        return tuple(
+            int.from_bytes(data[i : i + 4], "little") for i in range(0, len(data), 4)
+        )
 
 
 class FakeDisk:
@@ -139,8 +152,13 @@ class FakeDisk:
 
 
 class FakeCatalog:
-    def __init__(self, schema: TableSchema | None = None) -> None:
+    def __init__(
+        self,
+        schema: TableSchema | None = None,
+        indexes: list | None = None,
+    ) -> None:
         self.schema = schema or SCHEMA
+        self.indexes = indexes or []
 
     def get_table_schema(self, table: str) -> TableSchema:
         if table != self.schema.name:
@@ -148,7 +166,7 @@ class FakeCatalog:
         return self.schema
 
     def list_indexes(self, table: str | None = None) -> list:
-        return []
+        return list(self.indexes)
 
 
 class FakeIndexManager:
@@ -186,12 +204,18 @@ class FakeStats:
 SCHEMA = TableSchema(name="student", columns=[ColumnSchema("id", DataType.INTEGER)])
 
 
-def make_page(rows: list[int | None]) -> bytearray:
-    page = FakeSlottedPage.init_page(0, RECORD_SIZE)
+def make_page(
+    rows: list,
+    record_size: int = RECORD_SIZE,
+    schema: TableSchema | None = None,
+) -> bytearray:
+    schema = schema or SCHEMA
+    page = FakeSlottedPage.init_page(0, record_size)
     for slot, value in enumerate(rows):
         if value is None:
-            FakeSlottedPage.write_slot(page, slot, b"\x00" * RECORD_SIZE)
+            FakeSlottedPage.write_slot(page, slot, b"\x00" * record_size)
             FakeSlottedPage.mark_tombstone(page, slot)
         else:
-            FakeSlottedPage.write_slot(page, slot, value.to_bytes(RECORD_SIZE, "little"))
+            values = value if isinstance(value, tuple) else (value,)
+            FakeSlottedPage.write_slot(page, slot, FakeCodec.encode(schema, values))
     return page
