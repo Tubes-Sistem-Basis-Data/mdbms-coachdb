@@ -6,99 +6,17 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from common.catalog import ColumnSchema, DataType, TableSchema
-from common.errors import StorageError
 from common.storage import RID
 from storage_manager.buffer import BufferPool
 from storage_manager.crud import RecordManager
 from storage_manager.errors import TableNotFoundError
-from storage_manager.page import PageHeader, SlotStatus
-
-RECORD_SIZE = 4
-MAX_SLOTS = 8
-STATUS_OFFSET = 4
-DATA_OFFSET = STATUS_OFFSET + MAX_SLOTS
-
-
-class FakeSlottedPage:
-    """SlottedPage minimal untuk test: satu page berisi 8 slot x 4 byte."""
-
-    @staticmethod
-    def init_page(page_id: int, record_size: int) -> bytearray:
-        return bytearray(DATA_OFFSET + MAX_SLOTS * record_size)
-
-    @staticmethod
-    def read_header(buf: bytearray) -> PageHeader:
-        return PageHeader(0, 0, int.from_bytes(buf[0:4], "little"), RECORD_SIZE, 0)
-
-    @staticmethod
-    def read_slot(buf: bytearray, slot: int) -> bytes | None:
-        if slot < 0 or slot >= MAX_SLOTS:
-            return None
-        if buf[STATUS_OFFSET + slot] != SlotStatus.LIVE.value:
-            return None
-        start = DATA_OFFSET + slot * RECORD_SIZE
-        return bytes(buf[start : start + RECORD_SIZE])
-
-    @staticmethod
-    def write_slot(buf: bytearray, slot: int, data: bytes) -> None:
-        count = int.from_bytes(buf[0:4], "little")
-        if slot >= count:
-            buf[0:4] = (slot + 1).to_bytes(4, "little")
-        buf[STATUS_OFFSET + slot] = SlotStatus.LIVE.value
-        start = DATA_OFFSET + slot * RECORD_SIZE
-        buf[start : start + RECORD_SIZE] = data
-
-    @staticmethod
-    def mark_tombstone(buf: bytearray, slot: int) -> None:
-        buf[STATUS_OFFSET + slot] = SlotStatus.TOMBSTONE.value
-
-
-class FakeCodec:
-    @staticmethod
-    def decode(schema: TableSchema, data: bytes) -> tuple:
-        return (int.from_bytes(data, "little"),)
-
-
-class FakeDisk:
-    def __init__(self, pages: dict[tuple[str, int], bytearray]) -> None:
-        self.pages = pages
-        self.reads: list[tuple[str, int]] = []
-
-    def read_page(self, table: str, page_id: int) -> bytearray:
-        self.reads.append((table, page_id))
-        try:
-            return bytearray(self.pages[(table, page_id)])
-        except KeyError:
-            raise StorageError(f"page {table}:{page_id} tidak ada") from None
-
-    def num_pages(self, table: str) -> int:
-        ids = [page_id for name, page_id in self.pages if name == table]
-        return max(ids) + 1 if ids else 0
-
-
-class FakeCatalog:
-    def __init__(self, schema: TableSchema) -> None:
-        self.schema = schema
-
-    def get_table_schema(self, table: str) -> TableSchema:
-        if table != self.schema.name:
-            raise TableNotFoundError(f"tabel {table} tidak ada")
-        return self.schema
-
-
-SCHEMA = TableSchema(name="student", columns=[ColumnSchema("id", DataType.INTEGER)])
-
-
-def make_page(rows: list[int | None]) -> bytearray:
-    page = FakeSlottedPage.init_page(0, RECORD_SIZE)
-    for slot, value in enumerate(rows):
-        if value is None:
-            FakeSlottedPage.write_slot(page, slot, b"\x00" * RECORD_SIZE)
-            FakeSlottedPage.mark_tombstone(page, slot)
-        else:
-            FakeSlottedPage.write_slot(page, slot, value.to_bytes(RECORD_SIZE, "little"))
-    return page
+from tests.sm.fakes import (
+    FakeCatalog,
+    FakeCodec,
+    FakeDisk,
+    FakeSlottedPage,
+    make_page,
+)
 
 
 class BaseReadTest(unittest.TestCase):
@@ -106,7 +24,7 @@ class BaseReadTest(unittest.TestCase):
         self.disk = FakeDisk(pages)
         self.buffer = BufferPool(self.disk, 4)
         self.records = RecordManager(
-            threading.RLock(), self.buffer, FakeCatalog(SCHEMA), None, None
+            threading.RLock(), self.buffer, FakeCatalog(), None, None
         )
         return self.records
 
@@ -167,8 +85,8 @@ class TestFetch(BaseReadTest):
         self.assertEqual(row.values, [11])
 
     def test_slot_kosong_mengembalikan_none(self) -> None:
-        page = FakeSlottedPage.init_page(0, RECORD_SIZE)
-        FakeSlottedPage.write_slot(page, 0, (10).to_bytes(RECORD_SIZE, "little"))
+        page = FakeSlottedPage.init_page(0, 4)
+        FakeSlottedPage.write_slot(page, 0, (10).to_bytes(4, "little"))
         self.make_records({("student", 0): page})
         self.assertIsNone(self.fetch(RID("student", 0, 5)))
 
