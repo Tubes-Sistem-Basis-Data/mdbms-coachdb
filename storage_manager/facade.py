@@ -59,11 +59,11 @@ class StorageManager(StorageManagerBase):
 
     def scan(self, table: str) -> Iterator[Row]:
         """Iterasi seluruh baris tabel. Dipanggil QP."""
-        return iter(())
+        return self._records.scan(table)
 
     def fetch(self, table: str, rid: RID) -> Row | None:
         """Ambil satu baris lewat RID, None jika tidak ada. Dipanggil QP dan FRM."""
-        return None
+        return self._records.fetch(table, rid)
 
     def allocate_rid(self, table: str) -> RID:
         """Pesan slot kosong untuk INSERT. Dipanggil QP sebelum minta izin CCM."""

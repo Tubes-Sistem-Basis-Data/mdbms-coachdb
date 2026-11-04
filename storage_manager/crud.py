@@ -5,8 +5,11 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING, Callable, Iterator, Optional
 
+from common.errors import StorageError
 from common.storage import RID, Row
 from storage_manager.buffer import Frame
+from storage_manager.page import SlottedPage
+from storage_manager.serializer import RecordCodec
 from storage_manager.types import LSN, Value
 
 if TYPE_CHECKING:
@@ -38,10 +41,42 @@ class RecordManager:
         return ()
 
     def scan(self, table: str) -> Iterator[Row]:
-        return iter(())
+        schema = self._catalog.get_table_schema(table)
+        page_count = self._buffer._disk.num_pages(table)
+        for page_id in range(page_count):
+            rows: list[Row] = []
+            with self._lock:
+                frame = self._buffer.get_page(table, page_id)
+                try:
+                    header = SlottedPage.read_header(frame.data)
+                    for slot in range(header.slot_count):
+                        data = SlottedPage.read_slot(frame.data, slot)
+                        if data is None:
+                            continue
+                        values = list(RecordCodec.decode(schema, data))
+                        rows.append(Row(RID(table, page_id, slot), values))
+                finally:
+                    self._buffer.unpin(frame, False)
+            for row in rows:
+                yield row
 
     def fetch(self, table: str, rid: RID) -> Optional[Row]:
-        return None
+        schema = self._catalog.get_table_schema(table)
+        with self._lock:
+            try:
+                frame = self._buffer.get_page(table, rid.page_id)
+            except StorageError:
+                return None
+            try:
+                header = SlottedPage.read_header(frame.data)
+                if rid.slot < 0 or rid.slot >= header.slot_count:
+                    return None
+                data = SlottedPage.read_slot(frame.data, rid.slot)
+                if data is None:
+                    return None
+                return Row(rid, list(RecordCodec.decode(schema, data)))
+            finally:
+                self._buffer.unpin(frame, False)
 
     def insert(
         self,
