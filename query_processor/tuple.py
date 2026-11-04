@@ -15,7 +15,6 @@ class ColumnBinding:
     qualifier: str
     name: str
     type: DataType
-    # Prefix asal kolom bersama NATURAL JOIN.
     alternate_qualifiers: tuple[str, ...] = ()
 
 
