@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import BinaryIO, Optional
 
-from common.config import DATA_DIR
+from common.config import DATA_DIR, BLOCK_SIZE
 
 
 class DiskManager:
@@ -26,6 +26,7 @@ class DiskManager:
         """
         self._data_dir: str = data_dir
         self._files: dict[str, BinaryIO] = {}
+        os.makedirs(self._data_dir, exist_ok=True)
 
 
     def __repr__(self) -> str:
@@ -55,9 +56,12 @@ class DiskManager:
         @param table (str) nama tabel yang akan dibuat
 
         @return None
-        @todo implement
         """
-        return None
+        path = os.path.join(self._data_dir, f"{table}.db")
+        if not os.path.exists(path):
+            with open(path, "wb"):
+                pass
+        self._files[table] = open(path, "r+b")
 
     def read_page(self, table: str, page_id: int) -> bytearray:
         """
@@ -67,9 +71,11 @@ class DiskManager:
         @param page_id (int) nomor ID page
 
         @return bytearray yang merupakan data bytes mentah dari isi page
-        @todo implement
         """
-        return bytearray()
+        fh = self._files[table]
+        fh.seek(page_id * BLOCK_SIZE)
+        raw = fh.read(BLOCK_SIZE)
+        return bytearray(raw)
 
 
     def write_page(self, table: str, page_id: int, data: bytes) -> None:
@@ -81,9 +87,14 @@ class DiskManager:
         @param data (bytes) bytes yang akan dituliskan  
 
         @return None
-        @todo implement
+        @raise ValueError jika ukuran data tidak align dengan BLOCK_SIZE
         """
-        return None
+        if len(data) != BLOCK_SIZE:
+            raise ValueError(f"Data size ({len(data)} bytes) does not align with BLOCK_SIZE ({BLOCK_SIZE} bytes)")
+
+        fh = self._files[table]
+        fh.seek(page_id * BLOCK_SIZE)
+        fh.write(data)
 
 
     def allocate_page(self, table: str, data: bytes) -> int:
@@ -94,9 +105,16 @@ class DiskManager:
         @param data (bytes) data untuk page baru
 
         @return int yang berupa page_id milik page baru
-        @todo implement
+        @raise ValueError jika ukuran data tidak align dengan BLOCK_SIZE
         """
-        return 0
+        if len(data) != BLOCK_SIZE:
+            raise ValueError(f"Data size ({len(data)} bytes) does not align with BLOCK_SIZE ({BLOCK_SIZE} bytes)")
+
+        fh = self._files[table]
+        new_page_id = self.num_pages(table)
+        fh.seek(0, 2)
+        fh.write(data)
+        return new_page_id
 
 
     def num_pages(self, table: str) -> int:
@@ -106,9 +124,11 @@ class DiskManager:
         @param table (str) nama tabel yang dituju
 
         @return int berupa jumlah page pada tabel tersebut
-        @todo implement
         """
-        return 0
+        fh = self._files[table]
+        fh.seek(0, 2)
+        size = fh.tell()
+        return size // BLOCK_SIZE
 
 
     def sync(self, table: Optional[str] = None) -> None:
@@ -118,9 +138,15 @@ class DiskManager:
         @param table (None/str) nama tabel tujuan, jika None maka akan flus semua file tabel
 
         @return None
-        @todo implement
         """
-        return None
+        if table is not None:
+            fh = self._files[table]
+            fh.flush()
+            os.fsync(fh.fileno())
+        else:
+            for fh in self._files.values():
+                fh.flush()
+                os.fsync(fh.fileno())
 
 
     def close(self) -> None:
@@ -128,6 +154,10 @@ class DiskManager:
         @brief Menutup semua handle file milik tabel
 
         @return None
-        @todo implement
         """
-        return None
+        for fh in self._files.values():
+            try:
+                fh.close()
+            except OSError:
+                pass
+        self._files.clear()
