@@ -70,11 +70,43 @@ class StatementParser:
 
     def parse_create_index(self, tokens: "TokenStream") -> ParsedQuery:
         """Mengenali CREATE INDEX <nama> ON <tabel>(<kolom>) [USING BTREE|HASH]"""
-        return ParsedQuery(sql="", kind=QueryKind.CREATE_INDEX)
+        tokens.expect(T.KEYWORD, "CREATE")
+        tokens.expect(T.KEYWORD, "INDEX")
+        name = tokens.expect(T.IDENT).value
+        tokens.expect(T.KEYWORD, "ON")
+        table = tokens.expect(T.IDENT).value
+        tokens.expect(T.LPAREN, "(")
+        column = tokens.expect(T.IDENT).value
+        tokens.expect(T.RPAREN, ")")
+        kind = IndexKind.BPLUS_TREE
+        if tokens.match(T.KEYWORD, "USING"):
+            tokens.advance()
+            if tokens.match(T.KEYWORD, "BTREE"):
+                tokens.advance()
+            elif tokens.match(T.KEYWORD, "HASH"):
+                tokens.advance()
+                kind = IndexKind.HASH
+            else:
+                tokens.error("diharapkan BTREE atau HASH")
+        plan = CreateIndex(index=IndexInfo(name=name, table=table, column=column, kind=kind))
+        return ParsedQuery(sql="", kind=QueryKind.CREATE_INDEX, plan=plan)
 
     def parse_transaction(self, tokens: "TokenStream") -> ParsedQuery:
         """Mengenali BEGIN [TRANSACTION], COMMIT, dan ABORT"""
-        return ParsedQuery(sql="", kind=QueryKind.TRANSACTION)
+        if tokens.match(T.KEYWORD, "BEGIN"):
+            tokens.advance()
+            if tokens.match(T.KEYWORD, "TRANSACTION"):
+                tokens.advance()
+            command = TransactionCommand.BEGIN
+        elif tokens.match(T.KEYWORD, "COMMIT"):
+            tokens.advance()
+            command = TransactionCommand.COMMIT
+        elif tokens.match(T.KEYWORD, "ABORT"):
+            tokens.advance()
+            command = TransactionCommand.ABORT
+        else:
+            tokens.error("diharapkan BEGIN, COMMIT, atau ABORT")
+        return ParsedQuery(sql="", kind=QueryKind.TRANSACTION, command=command)
 
     def _parse_target(self, tokens: "TokenStream", table: str) -> PlanNode:
         """Sumber baris UPDATE/DELETE: TableScan, dibungkus Filter jika ada WHERE."""
