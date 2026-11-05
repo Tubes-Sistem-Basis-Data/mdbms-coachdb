@@ -258,12 +258,10 @@ class SlottedPage:
 
     @staticmethod
     def capacity(record_size: int) -> int:
-        """
-        @brief Mengembalikan jumlah slot maksimum per-page (mungkin kurang dari capacity keseluruhan jika ada fragmentasi)
+        """Fixed slots: one status byte plus record payload, after the header."""
+        from common import config
+        from common.errors import StorageError
 
-        @param record_size (int) ukuran tetap satu record dalam byte
-        
-        @return int berupa jumlah slot yang dapat dimuat oleh satu page
-        @todo implement
-        """
-        return 0
+        if type(record_size) is not int or record_size <= 0:
+            raise StorageError("record_size harus bilangan bulat positif")
+        return max(0, (config.BLOCK_SIZE - SlottedPage.HEADER.size) // (record_size + 1))
