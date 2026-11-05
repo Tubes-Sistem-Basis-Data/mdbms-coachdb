@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import unittest
 
-from common.errors import TransactionAbortedError
+from common.errors import StorageError, TransactionAbortedError
 from common.transaction import NO_RECORD, AccessStatus, Action, ChangeOp
 from query_processor.operators.delete import DeleteExecution
 from tests.qp.fakes import ROWS, FakeCtx, FakeSM, FakeSource
 
+class FailingOpenSource(FakeSource):
+    def open(self, ctx):
+        super().open(ctx)
+        raise StorageError("gagal membuka source")
 
 class TestDelete(unittest.TestCase):
     def test_deletes_source_rows_with_lsn_and_before_image(self):
@@ -38,6 +42,14 @@ class TestDelete(unittest.TestCase):
         sm = FakeSM()
         with self.assertRaises(TransactionAbortedError):
             DeleteExecution("t", FakeSource()).execute(FakeCtx(sm, AccessStatus.ABORTED))
+        self.assertEqual(sm.deleted, [])
+
+    def test_source_closed_when_open_fails(self):
+        sm = FakeSM()
+        source = FailingOpenSource()
+        with self.assertRaises(StorageError):
+            DeleteExecution("t", source).execute(FakeCtx(sm))
+        self.assertTrue(source.closed)
         self.assertEqual(sm.deleted, [])
 
 

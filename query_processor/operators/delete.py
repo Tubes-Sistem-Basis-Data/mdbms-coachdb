@@ -16,8 +16,8 @@ class DeleteExecution(Executable):
 
     def execute(self, ctx: ExecContext) -> ExecutionResult:
         rows_to_delete = []
-        self._source.open(ctx)
         try:
+            self._source.open(ctx)
             while (row := self._source.next()) is not None:
                 rows_to_delete.append(row)
         finally:
