@@ -44,11 +44,13 @@ class StorageManager(StorageManagerBase):
 
     def list_tables(self) -> list[str]:
         """Daftar nama tabel di katalog. Dipanggil QO."""
-        return []
+        with self._lock:
+            return self._catalog.list_tables()
 
     def get_schema(self, table: str) -> TableSchema:
         """Skema tabel. Raise SemanticError jika tabel tidak ada. Dipanggil QO."""
-        return TableSchema(name=table, columns=[])
+        with self._lock:
+            return self._catalog.get_table_schema(table)
 
     def get_stats(self, table: str) -> TableStats:
         """Statistik tabel untuk cost model. Dipanggil QO."""
@@ -111,7 +113,8 @@ class StorageManager(StorageManagerBase):
 
     def list_indexes(self, table: str | None = None) -> list[IndexInfo]:
         """Daftar index, bisa difilter per tabel."""
-        return []
+        with self._lock:
+            return self._catalog.list_indexes(table)
 
     def validate(self, table: str, values: list) -> list:
         """Cek nilai sesuai skema, raise SchemaViolationError jika tidak."""

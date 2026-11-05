@@ -76,6 +76,8 @@ class TestReturnTypes(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.sm = SMFacade(self._tmp.name)
+        from common.catalog import ColumnSchema, DataType
+        self.sm._catalog.create_table("student", (ColumnSchema("id", DataType.INTEGER),), ("id",), ())
         self.frm = FRMFacade()
         self.ccm = CCManager(self.frm)
         self.frm.set_dependencies(self.sm, self.ccm)

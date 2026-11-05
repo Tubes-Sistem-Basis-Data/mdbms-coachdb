@@ -10,6 +10,9 @@ from common.catalog import (
     TableStats,
 )
 from common.errors import (
+    TableNotFoundError,
+    IndexDefinitionError,
+    SchemaViolationError,
     LogError,
     MdbmsError,
     QuerySyntaxError,
@@ -68,6 +71,7 @@ from common.transaction import (
 )
 
 __all__ = [
+    "TableNotFoundError", "IndexDefinitionError", "SchemaViolationError",
     "ColumnSchema", "DataType", "ForeignKey", "IndexInfo", "IndexKind", "TableSchema", "TableStats",
     "LogError", "MdbmsError", "QuerySyntaxError", "SemanticError", "StorageError",
     "TransactionAbortedError",
