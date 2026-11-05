@@ -17,10 +17,13 @@ class FilterOp(RowOperator):
         self.schema = child.schema
 
     def open(self, ctx: ExecContext) -> None:
-        return None
+        self._child.open(ctx)
 
     def next(self) -> ExecRow | None:
+        while (row := self._child.next()) is not None:
+            if self._evaluator.eval_bool(self._condition, row):
+                return row
         return None
 
     def close(self) -> None:
-        return None
+        self._child.close()
