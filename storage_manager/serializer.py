@@ -121,6 +121,26 @@ class RecordCodec:  # Encode/decode nilai dan record
     # SM-03: serialisasi record
 
     @staticmethod
+    def max_record_size(schema: TableSchema) -> int:
+        size = (len(schema.columns) + 7) // 8
+        for column in schema.columns:
+            if column.type in (DataType.CHAR, DataType.VARCHAR):
+                if type(column.length) is not int or column.length <= 0:
+                    raise SchemaViolationError(f"Panjang kolom harus positif: {column.name}")
+                if column.type == DataType.VARCHAR:
+                    if column.length > 65535:
+                        raise SchemaViolationError(
+                            f"Panjang VARCHAR melebihi prefix 2 byte: {column.name}"
+                        )
+                    size += 2
+                size += column.length
+            elif column.type in (DataType.INTEGER, DataType.FLOAT):
+                size += RecordCodec._fixed_size(column)
+            else:
+                raise SchemaViolationError(f"Tipe kolom tidak didukung: {column.name}")
+        return size
+
+    @staticmethod
     def record_size(schema: TableSchema, values: tuple[Value, ...]) -> int:
         # Ukuran aktual satu record (byte) untuk `values` ini.
         return len(RecordCodec.encode(schema, values))

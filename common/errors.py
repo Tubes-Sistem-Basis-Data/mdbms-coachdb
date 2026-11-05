@@ -42,3 +42,15 @@ class StorageError(MdbmsError):
 
 class LogError(MdbmsError):
     """Kegagalan operasi log."""
+
+
+class TableNotFoundError(SemanticError):
+    """Tabel tidak ada di katalog."""
+
+
+class IndexDefinitionError(SemanticError):
+    """Definisi atau operasi index tidak valid."""
+
+
+class SchemaViolationError(StorageError):
+    """Nilai atau definisi tidak sesuai skema."""
