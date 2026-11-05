@@ -4,7 +4,9 @@ from typing import Iterator
 
 from common.catalog import IndexInfo
 from common.expression import CompOp
+from common.errors import TransactionAbortedError
 from common.storage import RID, Row
+from common.transaction import AccessStatus
 from query_processor.context import ExecContext
 from query_processor.operators.base import RowOperator
 from query_processor.tuple import ExecRow, OutputSchema, Value
@@ -18,13 +20,23 @@ class TableScanOp(RowOperator):
         self._cursor: Iterator[Row] | None = None
 
     def open(self, ctx: ExecContext) -> None:
-        return None
+        response = ctx.authorize_table(self._table)
+        if response.status != AccessStatus.ALLOWED:
+            raise TransactionAbortedError(response.message, ctx.tx_id)
+        self._ctx = ctx
+        self._cursor = iter(ctx.sm.scan(self._table))
 
     def next(self) -> ExecRow | None:
-        return None
+        if self._cursor is None:
+            return None
+        row = next(self._cursor, None)
+        if row is None:
+            return None
+        return ExecRow(tuple(row.values), self.schema, row.rid)
 
     def close(self) -> None:
-        return None
+        self._cursor = None
+        self._ctx = None
 
 
 class IndexScanOp(RowOperator):

@@ -13,17 +13,21 @@ class ProjectOp(RowOperator):
     def __init__(self, child: RowOperator, columns: list[ColumnRef]) -> None:
         self._child = child
         self._columns = columns
-        self._positions: list[int] = []
-        self.schema = OutputSchema([])
+        self._positions = [child.schema.index_of(c) for c in columns]
+        self.schema = OutputSchema([child.schema.columns[i] for i in self._positions])
 
     def open(self, ctx: ExecContext) -> None:
-        return None
+        self._child.open(ctx)
 
     def next(self) -> ExecRow | None:
-        return None
+        row = self._child.next()
+        if row is None:
+            return None
+        values = tuple(row.values[i] for i in self._positions)
+        return ExecRow(values, self.schema, row.rid)
 
     def close(self) -> None:
-        return None
+        self._child.close()
 
 
 class SelectExecution(Executable):
@@ -33,4 +37,12 @@ class SelectExecution(Executable):
         self._root = root
 
     def execute(self, ctx: ExecContext) -> ExecutionResult:
-        return ExecutionResult(ok=False, message="SELECT belum diimplementasi")
+        rows: list[list] = []
+        self._root.open(ctx)
+        try:
+            while (row := self._root.next()) is not None:
+                rows.append(list(row.values))
+        finally:
+            self._root.close()
+        columns = [binding.name for binding in self._root.schema.columns]
+        return ExecutionResult(ok=True, columns=columns, rows=rows)
