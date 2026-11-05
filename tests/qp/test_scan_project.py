@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import unittest
 
-from common.errors import TransactionAbortedError
+from common.errors import StorageError, TransactionAbortedError
 from common.expression import ColumnRef
 from common.transaction import AccessStatus
 from query_processor.operators.project import ProjectOp, SelectExecution
 from query_processor.operators.scan import TableScanOp
-from tests.qp.fakes import ROWS, SCHEMA, FakeCtx, FakeSM, drain
+from tests.qp.fakes import ROWS, SCHEMA, FakeCtx, FakeSM, FakeSource, drain
 
+class FailingOpenSource(FakeSource):
+    def open(self, ctx):
+        super().open(ctx)
+        raise StorageError("gagal membuka root")
 
 class TestTableScan(unittest.TestCase):
     def test_returns_all_rows_with_rid(self):
@@ -52,6 +56,11 @@ class TestSelectExecution(unittest.TestCase):
         self.assertEqual(result.columns, ["name"])
         self.assertEqual(result.rows, [["n0"], ["n1"], ["n2"], ["n3"]])
 
+    def test_root_closed_when_open_fails(self):
+        root = FailingOpenSource()
+        with self.assertRaises(StorageError):
+            SelectExecution(root).execute(FakeCtx(FakeSM()))
+        self.assertTrue(root.closed)
 
 if __name__ == "__main__":
     unittest.main()

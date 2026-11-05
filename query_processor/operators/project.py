@@ -38,8 +38,8 @@ class SelectExecution(Executable):
 
     def execute(self, ctx: ExecContext) -> ExecutionResult:
         rows: list[list] = []
-        self._root.open(ctx)
         try:
+            self._root.open(ctx)
             while (row := self._root.next()) is not None:
                 rows.append(list(row.values))
         finally:
