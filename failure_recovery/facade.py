@@ -16,6 +16,8 @@ from common.log import (
     RecoveryTarget,
 )
 from common.transaction import TxResult, TxStatus
+from failure_recovery.checkpoint.checkpoint_manager import CheckpointManager
+from failure_recovery.checkpoint.checkpoint_store import CheckpointStore
 from failure_recovery.log.log_reader import LogReader
 from failure_recovery.log.wal_logger import WalLogger
 
@@ -31,8 +33,9 @@ class FailureRecoveryManager(FailureRecoveryManagerBase):
     ) -> None:
         resolved = Path(log_path) if log_path else Path(config.DATA_DIR) / "wal.log"
         self._log_path = resolved
-        self._master_path = master_path
-        self._snapshot_dir = snapshot_dir
+        self._master_path = master_path if master_path is not None else str(resolved.with_suffix(".checkpoint.json"))
+        self._snapshot_dir = snapshot_dir if snapshot_dir is not None else str(resolved.parent / "snapshots")
+        self._checkpoint_store = CheckpointStore(self._master_path, self._snapshot_dir)
         self._log_writer = WalLogger(str(resolved))
         self._log_reader = LogReader(str(resolved))
         self._log_flusher = self._log_writer
@@ -64,7 +67,9 @@ class FailureRecoveryManager(FailureRecoveryManagerBase):
 
     def checkpoint(self) -> CheckpointResult:
         """Buat checkpoint lewat CheckpointManager."""
-        return CheckpointResult(ok=False, message="belum diimplementasikan")
+        if self._checkpoint_service is None:
+            return CheckpointResult(ok=False, message="Dependensi SM dan CCM belum dipasang")
+        return self._checkpoint_service.checkpoint()
 
     def recover(self) -> RecoveryResult:
         """Crash recovery lewat RecoveryManager. Dipanggil main.py saat startup."""
@@ -82,7 +87,21 @@ class FailureRecoveryManager(FailureRecoveryManagerBase):
         """Suntik SM dan CCM. Dipanggil main.py saat bootstrap."""
         self._sm = sm
         self._ccm = ccm
+        self._checkpoint_service = CheckpointManager(
+            log_flusher=self._log_flusher,
+            ccm=ccm,
+            sm=sm,
+            log_writer=self._log_writer,
+            store=self._checkpoint_store,
+            pitr=None,
+            log_reader=self._log_reader,
+        )
 
     def close(self) -> None:
         """Tutup sumber daya FRM."""
-        self._log_writer.close()
+        if self._checkpoint_service is None:
+            self._log_writer.close()
+        else:
+            self._checkpoint_service.stop_periodic()
+            with self._checkpoint_service.checkpoint_lock:
+                self._log_writer.close()
