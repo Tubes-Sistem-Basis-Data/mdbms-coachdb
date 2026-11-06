@@ -5,8 +5,12 @@ from __future__ import annotations
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from common.catalog import DataType
+
+if TYPE_CHECKING:
+    from common.plan import PlanNode
 
 
 class Expression(ABC):
@@ -72,3 +76,13 @@ class And(Expression):
     """Konjungsi beberapa kondisi."""
 
     conditions: list[Expression]
+
+
+@dataclass
+class Subquery(Expression):
+    """Subquery skalar di dalam kondisi, mis. `WHERE ipk > (SELECT ...)`.
+
+    `plan` harus menghasilkan tepat satu kolom dan paling banyak satu baris.
+    """
+
+    plan: PlanNode
