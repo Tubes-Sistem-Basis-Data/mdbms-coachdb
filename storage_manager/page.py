@@ -211,6 +211,9 @@ class SlottedPage:
         @return SlotStatus berupa status dari slot tersebut
         """
         hdr = SlottedPage.read_header(buf)
+        if slot < 0 or slot >= hdr.slot_count:
+            return SlotStatus.EMPTY
+
         off = SlottedPage._slot_offset(hdr.record_size, slot)
         return SlotStatus(buf[off])
 
@@ -225,8 +228,10 @@ class SlottedPage:
         @return bytes berupa data pada slot dari page tersebut jika bersifat LIVE, selain itu None
         """
         hdr = SlottedPage.read_header(buf)
-        off = SlottedPage._slot_offset(hdr.record_size, slot)
+        if slot < 0 or slot >= hdr.slot_count:
+            return None
 
+        off = SlottedPage._slot_offset(hdr.record_size, slot)
         if SlotStatus(buf[off]) is not SlotStatus.LIVE:
             return None
 
@@ -243,12 +248,16 @@ class SlottedPage:
         @param data (bytes) data yang ingin dituliskan ke slot
 
         @return None
+        @raise IndexError jika slot index tidak valid (seharusnya non-negatif)
         @raise ValueError jika ukuran space di slot yang dituju tidak cukup untuk melakukan penulisan seluruh data
         """
+        if slot < 0:
+            raise IndexError(f"Slot index must be non-negative (slot={slot})")
+
         hdr = SlottedPage.read_header(buf)
         data_len = len(data)
 
-        free_space = struct.unpack_from(SlottedPage.FREE_SPACE_PTR_FORMAT, buf, SlottedPage.HEADER_FORMAT.size)[0]
+        free_space = struct.unpack_from(SlottedPage.FREE_SPACE_PTR_FORMAT, buf, SlottedPage.FREE_SPACE_PTR_OFFSET)[0]
 
         req_slot_count = max(hdr.slot_count, slot + 1)
         dir_end = SlottedPage.DIR_START_OFFSET + (req_slot_count * SlottedPage.SLOT_DIR_ENTRY_SIZE)
@@ -275,8 +284,14 @@ class SlottedPage:
 
         @param buf (bytearray) buffer dari page
         @param slot (int) indeks slot
+
+        @return None
+        @raise IndexError jika slot yang dituju tidak berada di range valid slot_count dari header
         """
         hdr = SlottedPage.read_header(buf)
+        if slot < 0 or slot >= hdr.slot_count:
+            raise IndexError(f"Slot {slot} out of range (slot_count={hdr.slot_count})")
+
         off = SlottedPage._slot_offset(hdr.record_size, slot)
         buf[off] = SlotStatus.TOMBSTONE.value
 
