@@ -145,33 +145,47 @@ class RecordManager:
             self._index_manager.on_insert(table, normalized, rid)
             self._stats.on_insert(table)
 
-    def update(self, table: str, rid: RID, values: tuple[Value, ...], lsn: LSN) -> None:
+    def update(
+        self, table: str, rid: RID, values: tuple[Value, ...], lsn: LSN | None
+    ) -> None:
+        self._check_rid_table(table, rid)
         schema = self._catalog.get_table_schema(table)
         normalized = RecordCodec.validate(schema, values)
-        self._check_primary_key(table, normalized, rid)
+        if lsn is not None:
+            self._check_primary_key(table, normalized, rid)
         data = RecordCodec.encode(schema, normalized)
         changed = False
+        absent = False
         old_values: tuple[Value, ...] = ()
         with self._lock:
             try:
                 frame = self._buffer.get_page(table, rid.page_id)
             except StorageError:
-                return
+                if lsn is None:
+                    raise StorageError(f"page {table}:{rid.page_id} tidak ada") from None
+                raise StorageError(f"baris {rid} tidak ada") from None
             try:
                 existing = SlottedPage.read_slot(frame.data, rid.slot)
-                # Slot tombstone/kosong: no-op sementara (lihat SM1_TASKS.md).
-                if existing is not None and existing != data:
+                absent = existing is None
+                if absent and lsn is not None:
+                    raise StorageError(f"baris {rid} tidak ada")
+                changed = existing != data
+                if changed and not absent:
                     old_values = tuple(RecordCodec.decode(schema, existing))
+                if changed:
                     SlottedPage.write_slot(frame.data, rid.slot, data)
-                    SlottedPage.set_page_lsn(frame.data, lsn)
-                    changed = True
+                    if lsn is not None:
+                        SlottedPage.set_page_lsn(frame.data, lsn)
             except Exception:
                 self._buffer.unpin(frame, False)
                 raise
             self._buffer.unpin(frame, changed, lsn)
         if not changed:
             return
-        if self._indexed_columns_changed(table, schema, old_values, normalized):
+        if absent:
+            self._index_manager.on_insert(table, normalized, rid)
+            self._stats.on_insert(table)
+        elif self._indexed_columns_changed(table, schema, old_values, normalized):
             self._index_manager.on_update(table, old_values, normalized, rid)
         self._stats.invalidate(table)
 

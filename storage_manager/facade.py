@@ -78,8 +78,8 @@ class StorageManager(StorageManagerBase):
         self._records.insert(table, rid, tuple(values), lsn)
 
     def update(self, table: str, rid: RID, values: list, lsn: int | None) -> None:
-        """Ganti seluruh nilai baris di RID, idempoten. Dipanggil QP dan FRM."""
-        self._records.update(table, rid, tuple(values), 0 if lsn is None else lsn)
+        """Ganti seluruh nilai baris di RID. `lsn=None` = upsert undo/redo (D9)."""
+        self._records.update(table, rid, tuple(values), lsn)
 
     def delete(self, table: str, rid: RID, lsn: int | None) -> None:
         """Hapus baris di RID (tombstone), idempoten. Dipanggil QP dan FRM."""
