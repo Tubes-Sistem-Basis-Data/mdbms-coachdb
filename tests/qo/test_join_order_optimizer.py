@@ -5,10 +5,10 @@ from __future__ import annotations
 import unittest
 from unittest.mock import create_autospec
 
-from common.catalog import ColumnSchema, DataType, TableSchema, TableStats
+from common.catalog import ColumnSchema, DataType, IndexInfo, TableSchema, TableStats
 from common.expression import ColumnRef, Comparison, CompOp
 from common.interfaces import StorageManager
-from common.plan import Filter, Join, JoinKind, PlanNode, Project, TableScan
+from common.plan import Filter, IndexScan, Join, JoinKind, PlanNode, Project, TableScan
 from query_optimizer.cost_model import CostModel
 from query_optimizer.join_order_optimizer import JoinOrderOptimizer
 
@@ -39,7 +39,7 @@ def _eq(left, right) -> Comparison:
 
 def _tables(node: PlanNode) -> list[str]:
     """Kumpulkan nama tabel daun secara in-order (DFS kiri-dahulu)."""
-    if isinstance(node, TableScan):
+    if isinstance(node, (TableScan, IndexScan)):
         return [node.table]
     result: list[str] = []
     for child in node.children:
@@ -293,6 +293,28 @@ class TestEdgeCases(JoinOrderCase):
             for child in node.children:
                 check_algo(child)
         check_algo(result)
+
+    def test_index_scan_outer_preferred_when_selective(self) -> None:
+        """IndexScan dengan selektivitas tinggi (1 blok hasil) dipilih sebagai outer."""
+        idx_r = IndexScan(table="r", index=IndexInfo("idx_r_id", "r", "id"), op=CompOp.EQ, key=1)
+        plan = _cross(_scan("s"), idx_r)
+        result = self.reorder(plan)
+        self.assertEqual(_tables(result), ["r", "s"])
+
+    def test_select_star_project_preserves_column_order(self) -> None:
+        """Project(columns=[]) (SELECT *) menjaga urutan tabel daun agar urutan kolom stabil."""
+        project = Project(columns=[], children=[_cross(_scan("r"), _scan("s"))])
+        result = self.reorder(project)
+        self.assertIsInstance(result, Project)
+        self.assertEqual(_tables(result), ["r", "s"])
+
+    def test_output_columns_reordered_with_children(self) -> None:
+        """output_columns pada Join mengikuti urutan anak setelah ditukar."""
+        r = TableScan(table="r", output_columns=[_col("r", "id")])
+        s = TableScan(table="s", output_columns=[_col("s", "id")])
+        plan = Join(kind=JoinKind.CROSS, children=[r, s], output_columns=[_col("r", "id"), _col("s", "id")])
+        result = self.reorder(plan)
+        self.assertEqual(result.output_columns, [_col("s", "id"), _col("r", "id")])
 
 
 if __name__ == "__main__":

@@ -1,5 +1,3 @@
-"""Estimasi biaya plan dalam jumlah transfer blok."""
-
 from __future__ import annotations
 
 import operator
@@ -112,9 +110,7 @@ class CostModel:
             elif isinstance(node, TableScan):
                 result = self._scan(node.table, catalog)
             elif isinstance(node, IndexScan):
-                scan = self._scan(node.table, catalog)
-                rows = max(1.0, scan.rows / max(1.0, len([c for c in scan.columns if c.distinct])))
-                result = replace(scan, rows=rows, blocks=self._blocks(rows, scan.width), cost=self._blocks(rows, scan.width))
+                result = self._index_scan(node, self._scan(node.table, catalog))
             elif isinstance(node, Filter):
                 result = self._filter(node.condition, children[0])
             elif isinstance(node, Join):
@@ -138,6 +134,39 @@ class CostModel:
             return result
         finally:
             active.remove(id(node))
+
+    def _index_scan(self, node: IndexScan, scan: _Estimate) -> _Estimate:
+        """Kompatibilitas QO-12; biaya tetap full scan sampai model index M3."""
+        if node.index.table != node.table:
+            raise SemanticError("Tabel IndexScan berbeda dengan metadata index", node.table)
+        ref = ColumnRef(node.table, node.index.column)
+        _resolve(ref, scan.columns)
+
+        def comparison(op: CompOp, value: object) -> Comparison:
+            value_type = {int: DataType.INTEGER, float: DataType.FLOAT, str: DataType.VARCHAR, type(None): DataType.INTEGER}.get(type(value))
+            if value_type is None:
+                raise SemanticError("Tipe kunci IndexScan tidak valid")
+            return Comparison(op, ref, Literal(value, value_type))
+
+        if node.op is CompOp.EQ:
+            if node.low is not None or node.high is not None:
+                raise SemanticError("IndexScan kesamaan memakai key, bukan low/high")
+            condition = comparison(CompOp.EQ, node.key)
+        elif node.op in (CompOp.GT, CompOp.GE, CompOp.LT, CompOp.LE):
+            lower = node.op in (CompOp.GT, CompOp.GE)
+            if node.key is not None or (node.low if lower else node.high) is None:
+                raise SemanticError("IndexScan rentang membutuhkan batas low/high yang sesuai")
+            conditions = []
+            if node.low is not None:
+                conditions.append(comparison(node.op if lower else CompOp.GE, node.low))
+            if node.high is not None:
+                conditions.append(comparison(node.op if not lower else CompOp.LE, node.high))
+            condition = conditions[0] if len(conditions) == 1 else And(conditions)
+        else:
+            raise SemanticError("Operator IndexScan tidak didukung")
+        # Selektivitas memakai kolom dan predikat index, bukan jumlah kolom tabel.
+        # Jangan mengasumsikan penghematan I/O tanpa model traversal/fetch index.
+        return self._filter(condition, scan)
 
     def _join(self, node: Join, left: _Estimate, right: _Estimate) -> _Estimate:
         if node.algorithm != "BNLJ":
