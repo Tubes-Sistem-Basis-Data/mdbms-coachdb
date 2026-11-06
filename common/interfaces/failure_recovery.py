@@ -37,11 +37,20 @@ class FailureRecoveryManager(ABC):
 
     @abstractmethod
     def recover(self) -> RecoveryResult:
-        """Crash recovery saat startup. Dipanggil main.py."""
+        """Crash recovery saat startup. Dipanggil main.py.
+
+        Kegagalan dikembalikan sebagai `RecoveryResult(ok=False, message=...)`, tidak
+        di-raise. RecoveryError hanya dipakai di dalam FRM dan ditangkap facade.
+        """
 
     @abstractmethod
     def recover_to(self, target: RecoveryTarget) -> RecoveryResult:
-        """Pemulihan ke waktu atau transaksi tertentu."""
+        """Pemulihan ke waktu atau transaksi tertentu.
+
+        Menulis LogRecord(RESTORE) global, lalu flush_log dan checkpoint supaya recover()
+        berikutnya tidak me-redo catatan sebelum titik restore. Target dilaporkan lewat
+        `RecoveryResult.message`. Kegagalan dikembalikan sebagai `ok=False`.
+        """
 
     @abstractmethod
     def read_log(self, tx_id: int | None = None) -> list[LogRecord]:

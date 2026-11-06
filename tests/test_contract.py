@@ -10,6 +10,25 @@ from typing import Iterator
 
 from common import (
     NO_RECORD,
+    ColumnRef,
+    ColumnSchema,
+    CreateTable,
+    DataType,
+    DropTable,
+    IndexDefinitionError,
+    Limit,
+    LogError,
+    LogWriteError,
+    MdbmsError,
+    Project,
+    RecoveryError,
+    SchemaViolationError,
+    SemanticError,
+    StorageError,
+    Subquery,
+    SubqueryScan,
+    TableNotFoundError,
+    TableScan,
     AccessResponse,
     Action,
     CheckpointResult,
@@ -115,6 +134,10 @@ class TestReturnTypes(unittest.TestCase):
         self.assertIsNone(sm.update("student", rid, [1], None))
         self.assertIsNone(sm.delete("student", rid, None))
         self.assertIsNone(sm.delete_all("student", None))
+        self.assertIsInstance(sm.validate("student", [1]), list)
+        self.assertIsInstance(sm.validate("student", [1], rid=rid), list)
+        self.assertIsNone(sm.create_table(TableSchema("baru", [ColumnSchema("id", DataType.INTEGER)])))
+        self.assertIsNone(sm.drop_table("baru"))
         self.assertIsNone(sm.create_index(IndexInfo("idx_id", "student", "id")))
         self.assertIsInstance(sm.index_lookup("student", "id", 1), list)
         self.assertIsInstance(sm.index_range("student", "id", None, 10), list)
@@ -181,6 +204,36 @@ class TestSharedTypes(unittest.TestCase):
 
     def test_query_kind_explain(self):
         self.assertEqual(QueryKind.EXPLAIN.value, "EXPLAIN")
+
+    def test_error_turunan_baru(self):
+        self.assertTrue(issubclass(TableNotFoundError, SemanticError))
+        self.assertTrue(issubclass(IndexDefinitionError, SemanticError))
+        self.assertTrue(issubclass(SchemaViolationError, StorageError))
+        self.assertTrue(issubclass(LogWriteError, LogError))
+        self.assertTrue(issubclass(RecoveryError, MdbmsError))
+
+    def test_error_sm_satu_identitas(self):
+        from storage_manager import errors as sm_errors
+
+        self.assertIs(sm_errors.TableNotFoundError, TableNotFoundError)
+
+    def test_log_record_lama_tetap_jalan(self):
+        rec = LogRecord(LogKind.BEGIN, tx_id=1)
+        self.assertEqual(rec.prev_lsn, -1)
+        self.assertEqual(LogKind.RESTORE.value, "RESTORE")
+
+    def test_tipe_bonus_punya_default(self):
+        self.assertIsNone(TableScan(table="t").alias)
+        self.assertEqual(Project(columns=[ColumnRef("t", "a")]).aliases, [])
+        scan = TableScan(table="t")
+        self.assertIs(SubqueryScan(alias="s", children=[scan]).children[0], scan)
+        self.assertIs(Subquery(plan=scan).plan, scan)
+        self.assertEqual(Limit(count=5).count, 5)
+        self.assertEqual(DropTable(table="t").table, "t")
+        schema = TableSchema("t", [ColumnSchema("id", DataType.INTEGER)])
+        self.assertIs(CreateTable(schema=schema).schema, schema)
+        self.assertEqual(QueryKind.CREATE_TABLE.value, "CREATE_TABLE")
+        self.assertEqual(QueryKind.DROP_TABLE.value, "DROP_TABLE")
 
 
 if __name__ == "__main__":

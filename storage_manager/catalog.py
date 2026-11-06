@@ -14,7 +14,7 @@ from storage_manager.serializer import RecordCodec
 
 
 class Catalog:
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str | None) -> None:
         self._path = path
         self._tables: dict[str, TableSchema] = {}
         self._indexes: dict[str, IndexInfo] = {}
@@ -125,6 +125,8 @@ class Catalog:
 
     def _load(self) -> None:
         """Replace metadata only after the entire catalog has been validated."""
+        if self._path is None:
+            return
         try:
             with open(self._path, encoding="utf-8") as stream:
                 data = json.load(stream)
@@ -166,6 +168,8 @@ class Catalog:
 
     def _persist(self) -> None:
         """Write a complete JSON file, fsync, then atomically replace the old file."""
+        if self._path is None:
+            return
         temporary = None
         try:
             directory = os.path.dirname(os.path.abspath(self._path))
