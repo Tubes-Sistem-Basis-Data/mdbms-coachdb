@@ -6,7 +6,8 @@ M3: Join(Join(A,B), C) <-> Join(A, Join(B,C))
 
 from __future__ import annotations
 
-from common.plan import Join, JoinKind, PlanNode
+from common.errors import SemanticError
+from common.plan import Join, JoinKind, PlanNode, Project
 from .cost_model import CostModel
 
 
@@ -26,18 +27,16 @@ def _clone_join(node: Join, left: PlanNode, right: PlanNode) -> Join:
 def _safe_cost(node: PlanNode, model: CostModel) -> float:
     try:
         return model.get_cost(node)
-    except Exception:
+    except SemanticError:
         return float("inf")
 
 
 def _commute(node: Join) -> Join:
-    # M2: tukar posisi left dan right
     left, right = node.children
     return _clone_join(node, right, left)
 
 
 def _rotate_left(node: Join) -> Join | None:
-    # M3: Join(Join(A,B), C) -> Join(A, Join(B,C))
     left = node.children[0]
     if not _is_join(left):
         return None
@@ -48,7 +47,6 @@ def _rotate_left(node: Join) -> Join | None:
 
 
 def _rotate_right(node: Join) -> Join | None:
-    # M3: Join(A, Join(B,C)) -> Join(Join(A,B), C)
     right = node.children[1]
     if not _is_join(right):
         return None
@@ -68,20 +66,25 @@ class JoinOrderOptimizer:
         return self._reorder_recursive(plan, cost_model)
 
     def _reorder_recursive(self, node: PlanNode, model: CostModel) -> PlanNode:
-        # bottom-up: anak dulu baru parent
         node.children = [self._reorder_recursive(child, model) for child in node.children]
+        if isinstance(node, Project) and node.children and _is_join(node.children[0]):
+            node.children[0] = self._optimize_join(node.children[0], model, node)
+            return node
         if not _is_join(node):
             return node
         assert isinstance(node, Join)
-        return self._optimize_join(node, model)
+        return self._optimize_join(node, model, None)
 
-    def _optimize_join(self, node: Join, model: CostModel) -> Join:
+    def _optimize_join(self, node: Join, model: CostModel, project: Project | None) -> Join:
         best = node
         best_cost = _safe_cost(best, model)
 
         for _ in range(self._max_passes):
             improved = False
             for candidate in self._generate_candidates(best):
+                if project is not None and not project.columns:
+                    if _has_different_column_order(node, candidate):
+                        continue
                 c = _safe_cost(candidate, model)
                 if c < best_cost - 1e-9:
                     best = candidate
@@ -94,17 +97,27 @@ class JoinOrderOptimizer:
 
     def _generate_candidates(self, node: Join) -> list[Join]:
         candidates: list[Join] = []
-
         candidates.append(_commute(node))
-
         rot_left = _rotate_left(node)
         if rot_left is not None:
             candidates.append(rot_left)
             candidates.append(_commute(rot_left))
-
         rot_right = _rotate_right(node)
         if rot_right is not None:
             candidates.append(rot_right)
             candidates.append(_commute(rot_right))
-
         return candidates
+
+
+def _leaf_tables(node: PlanNode) -> list[str]:
+    from common.plan import TableScan, IndexScan
+    if isinstance(node, (TableScan, IndexScan)):
+        return [node.table]
+    result: list[str] = []
+    for child in node.children:
+        result.extend(_leaf_tables(child))
+    return result
+
+
+def _has_different_column_order(original: Join, candidate: Join) -> bool:
+    return _leaf_tables(original) != _leaf_tables(candidate)
