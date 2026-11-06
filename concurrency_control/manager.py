@@ -1,4 +1,5 @@
 import threading
+from common.errors import MdbmsError
 from common.interfaces import ConcurrencyControlManager, FailureRecoveryManager
 from common.transaction import (
     AccessResponse,
@@ -14,6 +15,11 @@ from concurrency_control.frm_bridge import AbortCoordinator, FrmBridge
 from concurrency_control.lock_manager import LockManager
 from concurrency_control.protocol import ConcurrencyProtocol, Transaction
 from concurrency_control.serializability import ScheduleRecorder
+from concurrency_control.timestamp import TimestampProtocol
+
+
+class ProtocolSwitchError(MdbmsError):
+    """Ganti protokol saat masih ada transaksi aktif."""
 
 
 class CCManager(ConcurrencyControlManager):
@@ -89,16 +95,23 @@ class CCManager(ConcurrencyControlManager):
         self._cond.notify_all()
 
     def set_protocol(self, protocol: ProtocolType) -> None:
-        # ganti protokol, raise MdbmsError kalau masih ada transaksi aktif
-        return None
+        with self._mutex:
+            if self._transactions:
+                raise ProtocolSwitchError(
+                    f"Protokol tidak bisa diganti saat masih ada {len(self._transactions)} transaksi aktif"
+                )
+            if protocol is self._protocol_type:
+                return
+            self._protocol = self._make_protocol(protocol)
+            self._protocol_type = protocol
 
     def get_protocol(self) -> ProtocolType:
-        # protokol yang sedang aktif
         return self._protocol_type
 
     @staticmethod
     def _make_protocol(protocol: ProtocolType) -> ConcurrencyProtocol:
-        # LOCK_BASED -> LockManager, TIMESTAMP_BASED -> TimestampProtocol
+        if protocol is ProtocolType.TIMESTAMP_BASED:
+            return TimestampProtocol()
         return LockManager()
 
     def initialize(self, last_tx_id: int) -> None:
