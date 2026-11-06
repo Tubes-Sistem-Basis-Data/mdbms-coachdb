@@ -317,12 +317,13 @@ class SlottedPage:
         return hdr.slot_count
 
     @staticmethod
-    def capacity(record_size: int) -> int:
+    def capacity(record_size: int, block_size: int = BLOCK_SIZE) -> int:
         """
         @brief Mengembalikan jumlah slot maksimum per-page (mungkin kurang dari capacity keseluruhan jika ada fragmentasi)
 
         @param record_size (int) ukuran tetap satu record dalam byte
-        
+        @param block_size (int) ukuran satu blok dalam byte (default: BLOCK_SIZE)
+
         @return int berupa jumlah slot yang dapat dimuat oleh satu page
         @raise StorageError jika record_size bukan parameter valid (harus integer dan positif)
         """
@@ -332,5 +333,5 @@ class SlottedPage:
         if record_size <= 0:
             raise StorageError(f"record_size must be positive (record_size={record_size})")
 
-        usable_size = BLOCK_SIZE - SlottedPage.DIR_START_OFFSET
+        usable_size = block_size - SlottedPage.DIR_START_OFFSET
         return max(0, usable_size // (SlottedPage.SLOT_DIR_ENTRY_SIZE + record_size))
