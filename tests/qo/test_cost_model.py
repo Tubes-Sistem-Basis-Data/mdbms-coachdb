@@ -128,9 +128,42 @@ class TestScanCost(CostCase):
     def test_unsupported_node_cannot_be_reported_as_free(self) -> None:
         for node in (
             PlanNode(children=[TableScan(table="r")]), Insert(table="r", values=[integer()]),
-            IndexScan(table="r", index=IndexInfo("idx", "r", "id"), op=CompOp.EQ, key=1),
         ):
             with self.subTest(node=type(node).__name__), self.assertRaises(SemanticError):
+                self.model.get_cost(node)
+
+    def test_index_scan_compatibility_uses_indexed_column_distinct(self) -> None:
+        for column, expected_rows in (("id", 1.0), ("group_id", 10.0)):
+            node = IndexScan(table="r", index=IndexInfo("idx", "r", column), op=CompOp.EQ, key=1)
+            with self.subTest(column=column):
+                # Belum memodelkan traversal index M3: gunakan biaya scan konservatif.
+                self.assertEqual(self.model.get_cost(node), 100.0)
+                self.assertEqual(node.estimated_rows, expected_rows)
+
+    def test_empty_index_scan_never_invents_one_matching_row(self) -> None:
+        self.stats["r"] = TableStats("r", 0, 0, 0.0, 0, {})
+        node = IndexScan(table="r", index=IndexInfo("idx", "r", "id"), op=CompOp.EQ, key=1)
+        self.assertEqual(self.model.get_cost(node), 0.0)
+        self.assertEqual(node.estimated_rows, 0.0)
+
+    def test_range_index_scan_uses_shared_range_heuristic(self) -> None:
+        node = IndexScan(table="r", index=IndexInfo("idx", "r", "id"), op=CompOp.GT, low=100)
+        self.assertEqual(self.model.get_cost(node), 100.0)
+        self.assertAlmostEqual(node.estimated_rows, 1000 / 3)
+
+    def test_bounded_index_range_keeps_both_predicates(self) -> None:
+        node = IndexScan(table="r", index=IndexInfo("idx", "r", "id"), op=CompOp.GE, low=100, high=200)
+        self.assertEqual(self.model.get_cost(node), 100.0)
+        self.assertAlmostEqual(node.estimated_rows, 1000 / 9)
+
+    def test_invalid_index_scan_definition_is_rejected(self) -> None:
+        for node in (
+            IndexScan(table="r", index=IndexInfo("idx", "s", "id"), op=CompOp.EQ, key=1),
+            IndexScan(table="r", index=IndexInfo("idx", "r", "missing"), op=CompOp.EQ, key=1),
+            IndexScan(table="r", index=IndexInfo("idx", "r", "id"), op=CompOp.GT),
+            IndexScan(table="r", index=IndexInfo("idx", "r", "id"), op=CompOp.NE, key=1),
+        ):
+            with self.subTest(node=node), self.assertRaises(SemanticError):
                 self.model.get_cost(node)
 
     def test_bad_arity_and_plan_cycle_fail_explicitly(self) -> None:
