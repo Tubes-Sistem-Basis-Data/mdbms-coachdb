@@ -53,70 +53,77 @@ class BaseInsertTest(unittest.TestCase):
         for patcher in reversed(self._patches):
             patcher.stop()
 
-    def log(self, rid: RID) -> int:
-        return 1
+    def insert(self, values: tuple, lsn: int = 1) -> RID:
+        rid = self.records.allocate_rid("student")
+        self.records.insert("student", rid, values, lsn)
+        return rid
 
 
 class TestInsert(BaseInsertTest):
     def test_rid_berurutan(self) -> None:
-        rids = [self.records.insert("student", (i,), self.log) for i in range(3)]
+        rids = [self.insert((i,)) for i in range(3)]
         self.assertEqual(
             rids,
             [RID("student", 0, 0), RID("student", 0, 1), RID("student", 0, 2)],
         )
 
     def test_page_baru_saat_page_penuh(self) -> None:
-        rids = [self.records.insert("student", (i,), self.log) for i in range(9)]
+        rids = [self.insert((i,)) for i in range(9)]
         self.assertEqual(rids[7], RID("student", 0, 7))
         self.assertEqual(rids[8], RID("student", 1, 0))
 
-    def test_log_fn_dipanggil_sekali_dengan_rid_benar(self) -> None:
-        calls: list[RID] = []
+    def test_insert_mengatur_page_lsn(self) -> None:
+        rid = self.insert((5,), lsn=42)
+        self.assertEqual(self.buffer._frames[("student", 0)].page_lsn, 42)
+        self.assertEqual(self.buffer._frames[("student", 0)].pin_count, 0)
+        row = self.records.fetch("student", rid)
+        assert row is not None
+        self.assertEqual(row.values, [5])
 
-        def log(rid: RID) -> int:
-            calls.append(rid)
-            return 1
-
-        rid = self.records.insert("student", (5,), log)
-        self.assertEqual(calls, [rid])
-
-    def test_log_fn_gagal_tidak_meninggalkan_record(self) -> None:
-        def gagal(rid: RID) -> int:
-            raise StorageError("log gagal")
-
+    def test_insert_tanpa_alokasi_raise_storage_error(self) -> None:
         with self.assertRaises(StorageError):
-            self.records.insert("student", (5,), gagal)
-        self.assertEqual(list(self.records.scan("student")), [])
-        for frame in self.buffer._frames.values():
-            self.assertEqual(frame.pin_count, 0)
+            self.records.insert("student", RID("student", 0, 0), (5,), 1)
 
-    def test_nilai_invalid_ditolak_tanpa_memanggil_log_fn(self) -> None:
-        calls: list[RID] = []
+    def test_insert_setelah_release_raise_storage_error(self) -> None:
+        rid = self.records.allocate_rid("student")
+        self.records.release_rid(rid)
+        with self.assertRaises(StorageError):
+            self.records.insert("student", rid, (5,), 1)
 
-        def log(rid: RID) -> int:
-            calls.append(rid)
-            return 1
-
+    def test_nilai_invalid_ditolak_sebelum_menulis(self) -> None:
+        rid = self.records.allocate_rid("student")
         with patch.object(
             FakeCodec, "validate", side_effect=SchemaViolationError("nilai salah")
         ):
             with self.assertRaises(SchemaViolationError):
-                self.records.insert("student", (1,), log)
-        self.assertEqual(calls, [])
+                self.records.insert("student", rid, (1,), 1)
+        self.assertEqual(self.records._reserved, {rid})
+        self.assertEqual(list(self.records.scan("student")), [])
 
     def test_tombstone_tidak_dipakai_ulang(self) -> None:
         self.disk.pages[("student", 0)] = make_page([None])
-        rid = self.records.insert("student", (5,), self.log)
+        rid = self.insert((5,))
         self.assertEqual(rid, RID("student", 0, 1))
+
+    def test_rid_tabel_tidak_sama_raise_storage_error(self) -> None:
+        rid = self.records.allocate_rid("student")
+        with self.assertRaises(StorageError):
+            self.records.insert("student", RID("dosen", rid.page_id, rid.slot), (5,), 1)
 
 
 class TestInsertPrimaryKey(BaseInsertTest):
     schema = PK_SCHEMA
 
     def test_primary_key_ganda_raise_schema_violation(self) -> None:
-        self.records.insert("student", (1,), self.log)
+        self.insert((1,))
         with self.assertRaises(SchemaViolationError):
-            self.records.insert("student", (1,), self.log)
+            self.insert((1,))
+
+    def test_pk_dilewati_saat_lsn_none(self) -> None:
+        self.insert((1,))
+        rid = RID("student", 0, 5)
+        self.records.insert("student", rid, (1,), None)
+        self.assertEqual([row.values for row in self.records.scan("student")], [[1], [1]])
 
 
 class TestRidAllocation(BaseInsertTest):
@@ -131,21 +138,27 @@ class TestRidAllocation(BaseInsertTest):
         self.assertEqual(self.records.allocate_rid("student"), first)
 
 
-class TestInsertAt(BaseInsertTest):
-    def test_insert_at_idempoten(self) -> None:
+class TestInsertUpsert(BaseInsertTest):
+    def test_insert_none_idempoten(self) -> None:
         rid = RID("student", 0, 0)
         self.disk.pages[("student", 0)] = make_page([])
-        self.records.insert_at("student", rid, (7,), 1)
-        self.records.insert_at("student", rid, (7,), 2)
+        self.records.insert("student", rid, (7,), None)
+        self.records.insert("student", rid, (7,), None)
         self.assertEqual(len(self.index.inserts), 1)
         self.assertEqual(self.stats.inserts, 1)
         self.assertEqual([row.values for row in self.records.scan("student")], [[7]])
 
-    def test_insert_at_menghidupkan_tombstone(self) -> None:
+    def test_insert_none_menghidupkan_tombstone(self) -> None:
         rid = RID("student", 0, 0)
         self.disk.pages[("student", 0)] = make_page([None])
-        self.records.insert_at("student", rid, (9,), 1)
+        self.records.insert("student", rid, (9,), None)
         self.assertEqual([row.values for row in self.records.scan("student")], [[9]])
+
+    def test_insert_none_tidak_mengubah_page_lsn(self) -> None:
+        rid = RID("student", 0, 0)
+        self.disk.pages[("student", 0)] = make_page([None])
+        self.records.insert("student", rid, (9,), None)
+        self.assertEqual(self.buffer._frames[("student", 0)].page_lsn, 0)
 
 
 if __name__ == "__main__":
