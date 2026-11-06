@@ -55,7 +55,20 @@ class CCManager(ConcurrencyControlManager):
         return tx.tx_id
 
     def validate_object(self, tx_id: int, resource: ResourceId, action: Action,change: DataChange | None = None,) -> AccessResponse:
-        return AccessResponse(status=AccessStatus.ALLOWED)
+        if action is Action.WRITE and change is None:
+            raise ValueError(f"T{tx_id}: WRITE ke {resource.table} wajib menyertakan DataChange")
+        with self._mutex:
+            tx = self._require_active(tx_id)
+            if tx is None:
+                return AccessResponse(status=AccessStatus.ABORTED, message=f"T{tx_id} tidak aktif")
+            response = self._protocol.request(tx, resource, action)
+            if response.status is not AccessStatus.ALLOWED:
+                return response
+            self.schedule.record(tx_id, resource, action)
+        if action is Action.READ:
+            return response
+        lsn = self._bridge.log_write(tx_id, change.op, change.table, change.rid, change.before, change.after)
+        return AccessResponse(status=AccessStatus.ALLOWED, lsn=lsn)
 
     def commit(self, tx_id: int) -> TxResult:
         with self._mutex:
