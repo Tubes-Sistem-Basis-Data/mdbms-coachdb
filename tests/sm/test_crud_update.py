@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from common.catalog import ColumnSchema, DataType, IndexInfo, TableSchema
+from common.errors import StorageError
 from common.storage import RID
 from storage_manager.buffer import BufferPool
 from storage_manager.crud import RecordManager
@@ -98,13 +99,29 @@ class TestUpdate(BaseUpdateTest):
     def test_slot_bukan_live(self) -> None:
         self.put([None])
         rid = RID("student", 0, 0)
-        self.records.update("student", rid, (1, 20), 1)
+        with self.assertRaises(StorageError):
+            self.records.update("student", rid, (1, 20), 1)
         self.assertIsNone(self.fetch(rid))
         self.assertEqual(self.stats.invalidations, 0)
         self.assertEqual(self.index.updates, [])
 
+    def test_slot_bukan_live_lsn_none_upsert(self) -> None:
+        self.put([None])
+        rid = RID("student", 0, 0)
+        self.records.update("student", rid, (1, 20), None)
+        row = self.fetch(rid)
+        assert row is not None
+        self.assertEqual(row.values, [1, 20])
+        self.assertEqual(self.index.inserts, [("student", (1, 20), rid)])
+        self.assertEqual(self.stats.inserts, 1)
+        self.assertEqual(self.stats.invalidations, 1)
+        self.assertEqual(self.buffer._frames[("student", 0)].page_lsn, 0)
+
     def test_page_tidak_ada(self) -> None:
-        self.records.update("student", RID("student", 7, 0), (1, 20), 1)
+        with self.assertRaises(StorageError):
+            self.records.update("student", RID("student", 7, 0), (1, 20), 1)
+        with self.assertRaises(StorageError):
+            self.records.update("student", RID("student", 7, 0), (1, 20), None)
         self.assertEqual(self.stats.invalidations, 0)
 
     def test_pin_count_kembali_nol(self) -> None:
@@ -153,6 +170,14 @@ class TestUpdatePrimaryKey(BaseUpdateTest):
         row = self.fetch(rid)
         assert row is not None
         self.assertEqual(row.values, [1, 10])
+
+    def test_pk_dilewati_saat_lsn_none(self) -> None:
+        self.put([(1, 10), (2, 20)])
+        rid = RID("student", 0, 0)
+        self.records.update("student", rid, (2, 99), None)
+        row = self.fetch(rid)
+        assert row is not None
+        self.assertEqual(row.values, [2, 99])
 
 
 if __name__ == "__main__":
