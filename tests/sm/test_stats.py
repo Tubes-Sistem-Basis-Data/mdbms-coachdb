@@ -1,6 +1,6 @@
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from common import ColumnSchema, DataType, RID, Row, TableNotFoundError
 from storage_manager.catalog import Catalog
@@ -21,8 +21,9 @@ class TestStatistics(unittest.TestCase):
 
     def test_exact_contract_values_and_copy(self):
         stats = self.stats.get_stats('t')
+        expected_fr = SlottedPage.capacity(self.catalog.get_record_size('t'))
         self.assertEqual(vars(stats), dict(table='t', n_r=3, b_r=2, l_r=17.0,
-                                          f_r=226, distinct={'id': 3, 'value': 1}))
+                                          f_r=expected_fr, distinct={'id': 3, 'value': 1}))
         stats.distinct.clear()
         self.assertEqual(self.stats.get_stats('t').distinct, {'id': 3, 'value': 1})
         self.assertEqual(self.scan.call_count, 1)
@@ -30,9 +31,10 @@ class TestStatistics(unittest.TestCase):
     def test_empty_table_and_missing(self):
         self.rows.clear()
         stats = self.stats.get_stats('t')
+        expected_fr = SlottedPage.capacity(self.catalog.get_record_size('t'))
         self.assertEqual((stats.n_r, stats.b_r, stats.distinct), (0, 0, {'id': 0, 'value': 0}))
         self.assertEqual(stats.l_r, 17.0)
-        self.assertEqual(stats.f_r, 226)
+        self.assertEqual(stats.f_r, expected_fr)
         with self.assertRaises(TableNotFoundError):
             self.stats.get_stats('missing')
 
@@ -63,10 +65,10 @@ class TestStatistics(unittest.TestCase):
         self.assertNotIn('t', self.stats._row_count)
 
     def test_capacity_includes_header_and_status(self):
-        with patch('common.config.BLOCK_SIZE', 100):
-            self.assertEqual(SlottedPage.capacity(9), 8)
-            self.assertEqual(SlottedPage.capacity(79), 1)
-            self.assertEqual(SlottedPage.capacity(80), 0)
+        block_size = 100
+        for record_size in (9, 73, 74):
+            expected = max(0, (block_size - SlottedPage.DIR_START_OFFSET) // (SlottedPage.SLOT_DIR_ENTRY_SIZE + record_size))
+            self.assertEqual(SlottedPage.capacity(record_size, block_size), expected)
 
     def test_facade_recounts_all_tables_on_rebuild(self):
         with tempfile.TemporaryDirectory() as directory:
