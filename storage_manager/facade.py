@@ -88,6 +88,10 @@ class StorageManager(StorageManagerBase):
         """Hapus seluruh baris tabel. Dipanggil QP untuk DELETE tanpa WHERE."""
         return None
 
+    def validate(self, table: str, values: list, rid: RID | None = None) -> list:
+        """Cek nilai sesuai skema, raise SchemaViolationError jika tidak. Dipanggil QP."""
+        return list(values)
+
     def create_table(self, schema: TableSchema) -> None:
         """Buat tabel baru dan catat di katalog. Dipanggil QP untuk CREATE TABLE."""
         return None
@@ -124,9 +128,6 @@ class StorageManager(StorageManagerBase):
         with self._lock:
             return self._catalog.list_indexes(table)
 
-    def validate(self, table: str, values: list) -> list:
-        """Cek nilai sesuai skema, raise SchemaViolationError jika tidak."""
-        return []
 
     def bulk_load(self, table: str, rows: list[list]) -> int:
         """Isi banyak baris sekaligus tanpa log. Dipakai seeder."""

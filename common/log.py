@@ -26,6 +26,7 @@ class LogRecord:
     """Satu catatan log. `lsn`, `timestamp`, dan `prev_lsn` diisi FRM saat `write_log`.
 
     `prev_lsn` menunjuk catatan sebelumnya milik transaksi yang sama (-1 jika tidak ada).
+    Catatan global tanpa transaksi (`tx_id=None`, mis. CHECKPOINT_* dan RESTORE) selalu -1.
     """
 
     kind: LogKind

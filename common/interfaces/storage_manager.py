@@ -41,6 +41,14 @@ class StorageManager(ABC):
         """Lepas RID yang dipesan tapi batal dipakai."""
 
     @abstractmethod
+    def validate(self, table: str, values: list, rid: RID | None = None) -> list:
+        """Cek dan normalisasi nilai baris sesuai skema, dipanggil QP sebelum INSERT/UPDATE.
+
+        Raise SchemaViolationError jika tidak sesuai. `rid` diisi saat UPDATE supaya baris
+        yang sedang diubah tidak dihitung bentrok dengan dirinya sendiri, None saat INSERT.
+        """
+
+    @abstractmethod
     def insert(self, table: str, rid: RID, values: list, lsn: int | None) -> None:
         """Tulis baris di RID. `lsn=None` saat dipanggil FRM untuk undo/redo."""
 
