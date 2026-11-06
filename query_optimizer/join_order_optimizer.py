@@ -21,6 +21,7 @@ def _clone_join(node: Join, left: PlanNode, right: PlanNode) -> Join:
         condition=node.condition,
         algorithm=node.algorithm,
         children=[left, right],
+        output_columns=left.output_columns + right.output_columns,
     )
 
 
@@ -65,26 +66,29 @@ class JoinOrderOptimizer:
     def reorder(self, plan: PlanNode, cost_model: CostModel) -> PlanNode:
         return self._reorder_recursive(plan, cost_model)
 
-    def _reorder_recursive(self, node: PlanNode, model: CostModel) -> PlanNode:
-        node.children = [self._reorder_recursive(child, model) for child in node.children]
-        if isinstance(node, Project) and node.children and _is_join(node.children[0]):
-            node.children[0] = self._optimize_join(node.children[0], model, node)
-            return node
+    def _reorder_recursive(
+        self, node: PlanNode, model: CostModel, preserve_order: bool = False,
+    ) -> PlanNode:
+        if isinstance(node, Project):
+            preserve_order = not node.columns
+        node.children = [
+            self._reorder_recursive(child, model, preserve_order)
+            for child in node.children
+        ]
         if not _is_join(node):
             return node
         assert isinstance(node, Join)
-        return self._optimize_join(node, model, None)
+        return self._optimize_join(node, model, preserve_order)
 
-    def _optimize_join(self, node: Join, model: CostModel, project: Project | None) -> Join:
+    def _optimize_join(self, node: Join, model: CostModel, preserve_order: bool = False) -> Join:
         best = node
         best_cost = _safe_cost(best, model)
 
         for _ in range(self._max_passes):
             improved = False
             for candidate in self._generate_candidates(best):
-                if project is not None and not project.columns:
-                    if _has_different_column_order(node, candidate):
-                        continue
+                if preserve_order and _has_different_column_order(node, candidate):
+                    continue
                 c = _safe_cost(candidate, model)
                 if c < best_cost - 1e-9:
                     best = candidate
