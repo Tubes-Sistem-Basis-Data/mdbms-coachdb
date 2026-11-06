@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 from common.errors import QuerySyntaxError
 from common.interfaces import QueryOptimizer, StorageManager
 from common.plan import ParsedQuery, PlanNode, Project, QueryKind, TableScan, TransactionCommand
@@ -51,5 +53,11 @@ class QueryOptimizerFacade(QueryOptimizer):
         return self._cost_model.get_cost(plan)
 
     def explain(self, query: ParsedQuery) -> str:
-        """Tampilkan plan untuk perintah EXPLAIN."""
-        return "mock plan"
+        """Tampilkan plan sebelum dan sesudah optimasi. Tidak menyentuh CCM dan tidak mengeksekusi apa pun."""
+        before = query.plan
+        cost_before = self._cost_model.get_cost(before) if before is not None else 0.0
+        # optimasi salinan supaya plan asli tidak ikut berubah
+        optimized = self.optimize_query(copy.deepcopy(query))
+        after = optimized.plan
+        cost_after = self._cost_model.get_cost(after) if after is not None else 0.0
+        return self._printer.build_explain(before, after, cost_before, cost_after)
