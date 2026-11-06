@@ -88,6 +88,14 @@ class StorageManager(StorageManagerBase):
         """Hapus seluruh baris tabel. Dipanggil QP untuk DELETE tanpa WHERE."""
         return None
 
+    def create_table(self, schema: TableSchema) -> None:
+        """Buat tabel baru dan catat di katalog. Dipanggil QP untuk CREATE TABLE."""
+        return None
+
+    def drop_table(self, table: str) -> None:
+        """Hapus tabel beserta index-nya. Dipanggil QP untuk DROP TABLE."""
+        return None
+
     def create_index(self, info: IndexInfo) -> None:
         """Bangun index dan catat di katalog. Dipanggil QP."""
         return None

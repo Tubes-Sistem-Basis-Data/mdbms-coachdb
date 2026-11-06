@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+Value = int | float | str | None
+"""Nilai satu kolom: INTEGER int, FLOAT float, CHAR/VARCHAR str, NULL None."""
+
 
 @dataclass(frozen=True)
 class RID:

@@ -18,11 +18,15 @@ class LogKind(Enum):
     ABORT = "ABORT"
     CHECKPOINT_BEGIN = "CHECKPOINT_BEGIN"
     CHECKPOINT_END = "CHECKPOINT_END"
+    RESTORE = "RESTORE"
 
 
 @dataclass
 class LogRecord:
-    """Satu catatan log. `lsn` dan `timestamp` diisi FRM saat `write_log`."""
+    """Satu catatan log. `lsn`, `timestamp`, dan `prev_lsn` diisi FRM saat `write_log`.
+
+    `prev_lsn` menunjuk catatan sebelumnya milik transaksi yang sama (-1 jika tidak ada).
+    """
 
     kind: LogKind
     tx_id: int | None = None
@@ -30,6 +34,7 @@ class LogRecord:
     active_tx: list[int] = field(default_factory=list)
     lsn: int = -1
     timestamp: float = 0.0
+    prev_lsn: int = -1
 
 
 @dataclass
