@@ -10,13 +10,6 @@ from common.catalog import (
     TableStats,
 )
 from common.errors import (
-<<<<<<< Updated upstream
-    TableNotFoundError,
-    IndexDefinitionError,
-    SchemaViolationError,
-=======
-    IndexDefinitionError,
->>>>>>> Stashed changes
     LogError,
     LogWriteError,
     MdbmsError,

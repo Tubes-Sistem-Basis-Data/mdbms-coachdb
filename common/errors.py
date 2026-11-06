@@ -45,7 +45,6 @@ class LogError(MdbmsError):
 
 
 class TableNotFoundError(SemanticError):
-<<<<<<< Updated upstream
     """Tabel tidak ada di katalog."""
 
 
@@ -55,8 +54,6 @@ class IndexDefinitionError(SemanticError):
 
 class SchemaViolationError(StorageError):
     """Nilai atau definisi tidak sesuai skema."""
-=======
-    """Tabel tidak ada di katalog. Dilempar SM, misalnya dari get_schema."""
 
 
 class IndexDefinitionError(SemanticError):
@@ -73,4 +70,3 @@ class LogWriteError(LogError):
 
 class RecoveryError(MdbmsError):
     """Recovery gagal. Dipakai main.py untuk pesan startup yang jelas."""
->>>>>>> Stashed changes
