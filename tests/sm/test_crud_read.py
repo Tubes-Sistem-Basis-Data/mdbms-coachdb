@@ -6,6 +6,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
+from common.errors import StorageError
 from common.storage import RID
 from storage_manager.buffer import BufferPool
 from storage_manager.crud import RecordManager
@@ -102,6 +103,11 @@ class TestFetch(BaseReadTest):
         self.make_records({})
         with self.assertRaises(TableNotFoundError):
             self.fetch(RID("dosen", 0, 0), table="dosen")
+
+    def test_rid_tabel_tidak_sama_raise_storage_error(self) -> None:
+        self.make_records({("student", 0): make_page([10])})
+        with self.assertRaises(StorageError):
+            self.fetch(RID("dosen", 0, 0), table="student")
 
     def test_pin_count_kembali_nol(self) -> None:
         self.make_records({("student", 0): make_page([10])})

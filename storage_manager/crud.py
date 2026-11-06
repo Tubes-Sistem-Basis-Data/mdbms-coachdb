@@ -61,6 +61,7 @@ class RecordManager:
                 yield row
 
     def fetch(self, table: str, rid: RID) -> Optional[Row]:
+        self._check_rid_table(table, rid)
         schema = self._catalog.get_table_schema(table)
         with self._lock:
             try:
@@ -100,6 +101,11 @@ class RecordManager:
 
     def _check_primary_key(self, table: str, values: tuple[Value, ...]) -> None:
         return None
+
+    @staticmethod
+    def _check_rid_table(table: str, rid: RID) -> None:
+        if rid.table != table:
+            raise StorageError(f"RID {rid} bukan milik tabel {table}")
 
     def _find_slot(self, table: str) -> tuple[Frame, int]:
         return Frame(table=table, page_id=0, data=bytearray()), 0
