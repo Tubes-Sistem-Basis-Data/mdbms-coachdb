@@ -39,7 +39,11 @@ class CompOp(Enum):
 
 @dataclass
 class ColumnRef(Expression):
-    """Referensi kolom. `table` selalu terisi setelah validasi QO."""
+    """Referensi kolom. `table` selalu terisi setelah validasi QO.
+
+    Jika sumbernya memakai alias (`TableScan.alias` atau `SubqueryScan.alias`), `table`
+    berisi alias tersebut, bukan nama tabel asli.
+    """
 
     table: str | None
     column: str
@@ -82,7 +86,8 @@ class And(Expression):
 class Subquery(Expression):
     """Subquery skalar di dalam kondisi, mis. `WHERE ipk > (SELECT ...)`.
 
-    `plan` harus menghasilkan tepat satu kolom dan paling banyak satu baris.
+    `plan` harus menghasilkan tepat satu kolom dan paling banyak satu baris. Hanya
+    subquery tak-berkorelasi: `plan` tidak boleh merujuk kolom dari query luar.
     """
 
     plan: PlanNode

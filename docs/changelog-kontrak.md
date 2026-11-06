@@ -47,3 +47,13 @@ Usulan berstatus diterima dengan syarat (`snapshot_to`/`restore_from` dan `rebui
 | Node `SubqueryScan(alias: str)`, plan subquery di `children[0]` | Subquery di FROM. | QO, QP | (menunggu) |
 | Ekspresi `Subquery(plan: PlanNode)` | Subquery skalar di kondisi, mis. `WHERE ipk > (SELECT ...)`. | QO, QP | (menunggu) |
 | Method abstrak `SM.create_table(schema)` dan `SM.drop_table(table)` | QP butuh jalur ke katalog SM untuk DDL. Facade SM dan stub di test QP ikut diperbarui. | SM, QP | (menunggu) |
+
+### Hasil review PR kontrak
+
+| Perubahan | Alasan | Terdampak | Disetujui |
+| --- | --- | --- | --- |
+| Method abstrak `SM.validate(table, values, rid: RID \| None = None) -> list` | Sebelumnya hanya method tambahan di facade SM, padahal QP-10/QP-11 sudah memanggilnya. Raise `SchemaViolationError`. `rid` diisi saat UPDATE supaya baris yang diubah tidak bentrok dengan dirinya sendiri saat cek primary key. | SM, QP | (menunggu) |
+| Docstring `ColumnRef`: `table` berisi alias jika sumbernya punya alias | Aturan bersama untuk binder QO dan executor QP. | QO, QP | (menunggu) |
+| Docstring `Subquery`: hanya subquery tak-berkorelasi | Batas lingkup bonus subquery. | QO, QP | (menunggu) |
+| Docstring `LogRecord.prev_lsn`: catatan dengan `tx_id=None` selalu -1 | Catatan global tidak punya rantai transaksi. | FRM | (menunggu) |
+| Docstring `FRM.recover`/`recover_to`: gagal dikembalikan sebagai `ok=False`; `recover_to` menulis `RESTORE` global lalu flush dan checkpoint | `main.py` mengecek `result.ok`. Checkpoint setelah restore mencegah redo catatan sebelum titik restore tanpa field baru di `LogRecord`. | FRM, main.py | (menunggu) |

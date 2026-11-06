@@ -134,6 +134,8 @@ class TestReturnTypes(unittest.TestCase):
         self.assertIsNone(sm.update("student", rid, [1], None))
         self.assertIsNone(sm.delete("student", rid, None))
         self.assertIsNone(sm.delete_all("student", None))
+        self.assertIsInstance(sm.validate("student", [1]), list)
+        self.assertIsInstance(sm.validate("student", [1], rid=rid), list)
         self.assertIsNone(sm.create_table(TableSchema("baru", [ColumnSchema("id", DataType.INTEGER)])))
         self.assertIsNone(sm.drop_table("baru"))
         self.assertIsNone(sm.create_index(IndexInfo("idx_id", "student", "id")))
