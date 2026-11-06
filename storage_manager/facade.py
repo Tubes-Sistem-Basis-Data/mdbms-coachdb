@@ -44,15 +44,18 @@ class StorageManager(StorageManagerBase):
 
     def list_tables(self) -> list[str]:
         """Daftar nama tabel di katalog. Dipanggil QO."""
-        return []
+        with self._lock:
+            return self._catalog.list_tables()
 
     def get_schema(self, table: str) -> TableSchema:
         """Skema tabel. Raise SemanticError jika tabel tidak ada. Dipanggil QO."""
-        return TableSchema(name=table, columns=[])
+        with self._lock:
+            return self._catalog.get_table_schema(table)
 
     def get_stats(self, table: str) -> TableStats:
         """Statistik tabel untuk cost model. Dipanggil QO."""
-        return TableStats(table=table, n_r=0, b_r=0, l_r=0.0, f_r=0, distinct={})
+        with self._lock:
+            return self._stats.get_stats(table)
 
     def scan(self, table: str) -> Iterator[Row]:
         """Iterasi seluruh baris tabel. Dipanggil QP."""
@@ -86,6 +89,18 @@ class StorageManager(StorageManagerBase):
         """Hapus seluruh baris tabel. Dipanggil QP untuk DELETE tanpa WHERE."""
         return None
 
+    def validate(self, table: str, values: list, rid: RID | None = None) -> list:
+        """Cek nilai sesuai skema, raise SchemaViolationError jika tidak. Dipanggil QP."""
+        return list(values)
+
+    def create_table(self, schema: TableSchema) -> None:
+        """Buat tabel baru dan catat di katalog. Dipanggil QP untuk CREATE TABLE."""
+        return None
+
+    def drop_table(self, table: str) -> None:
+        """Hapus tabel beserta index-nya. Dipanggil QP untuk DROP TABLE."""
+        return None
+
     def create_index(self, info: IndexInfo) -> None:
         """Bangun index dan catat di katalog. Dipanggil QP."""
         return None
@@ -111,19 +126,20 @@ class StorageManager(StorageManagerBase):
 
     def list_indexes(self, table: str | None = None) -> list[IndexInfo]:
         """Daftar index, bisa difilter per tabel."""
-        return []
+        with self._lock:
+            return self._catalog.list_indexes(table)
 
-    def validate(self, table: str, values: list) -> list:
-        """Cek nilai sesuai skema, raise SchemaViolationError jika tidak."""
-        return []
 
     def bulk_load(self, table: str, rows: list[list]) -> int:
         """Isi banyak baris sekaligus tanpa log. Dipakai seeder."""
         return 0
 
     def rebuild_indexes(self) -> None:
-        """Bangun ulang semua index dari isi tabel setelah recovery."""
-        return None
+        """Bangun ulang index dan statistik dari isi tabel setelah recovery."""
+        with self._lock:
+            self._index_manager.rebuild_all()
+            for table in self._catalog.list_tables():
+                self._stats.recount(table)
 
     def snapshot_to(self, path: str) -> None:
         """Salin seluruh data ke `path` (checkpoint, PITR)."""

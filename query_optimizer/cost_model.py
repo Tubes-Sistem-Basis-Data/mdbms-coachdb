@@ -9,10 +9,10 @@ from common.catalog import DataType, TableSchema, TableStats
 from common.errors import SemanticError
 from common.expression import And, BinaryOp, ColumnRef, Comparison, CompOp, Expression, Literal
 from common.interfaces import StorageManager
-from common.plan import Filter, Join, JoinKind, PlanNode, Project, Sort, TableScan
+from common.plan import Filter, IndexScan, Join, JoinKind, PlanNode, Project, Sort, TableScan
 
 
-_ARITY = {PlanNode: 0, TableScan: 0, Filter: 1, Project: 1, Join: 2, Sort: 1}
+_ARITY = {PlanNode: 0, TableScan: 0, IndexScan: 0, Filter: 1, Project: 1, Join: 2, Sort: 1}
 _UNKNOWN_EQUALITY = 0.1
 _RANGE_SELECTIVITY = 1 / 3
 _COMPARISONS = {
@@ -109,6 +109,10 @@ class CostModel:
                 result = _Estimate(0.0, 0, 0.0, [], 0.0)
             elif isinstance(node, TableScan):
                 result = self._scan(node.table, catalog)
+            elif isinstance(node, IndexScan):
+                scan = self._scan(node.table, catalog)
+                rows = max(1.0, scan.rows / max(1.0, len([c for c in scan.columns if c.distinct])))
+                result = replace(scan, rows=rows, blocks=self._blocks(rows, scan.width), cost=self._blocks(rows, scan.width))
             elif isinstance(node, Filter):
                 result = self._filter(node.condition, children[0])
             elif isinstance(node, Join):

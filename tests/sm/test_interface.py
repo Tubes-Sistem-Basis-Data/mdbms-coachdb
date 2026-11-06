@@ -14,6 +14,8 @@ class TestStorageManagerContract(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.sm = StorageManager(self._tmp.name, 4)
+        from common.catalog import ColumnSchema, DataType
+        self.sm._catalog.create_table("student", (ColumnSchema("id", DataType.INTEGER),), ("id",), ())
 
     def tearDown(self):
         self._tmp.cleanup()

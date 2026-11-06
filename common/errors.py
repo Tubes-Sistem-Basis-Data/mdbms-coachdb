@@ -42,3 +42,23 @@ class StorageError(MdbmsError):
 
 class LogError(MdbmsError):
     """Kegagalan operasi log."""
+
+
+class TableNotFoundError(SemanticError):
+    """Tabel tidak ada di katalog. Dilempar SM, misalnya dari get_schema."""
+
+
+class IndexDefinitionError(SemanticError):
+    """Definisi index tidak valid: kolom tidak ada, nama ganda, atau operasi tak didukung."""
+
+
+class SchemaViolationError(StorageError):
+    """Nilai tidak sesuai skema: tipe salah, terlalu panjang, atau NULL tak diizinkan."""
+
+
+class LogWriteError(LogError):
+    """Catatan log gagal ditulis atau di-flush ke disk."""
+
+
+class RecoveryError(MdbmsError):
+    """Recovery gagal. Dipakai main.py untuk pesan startup yang jelas."""
