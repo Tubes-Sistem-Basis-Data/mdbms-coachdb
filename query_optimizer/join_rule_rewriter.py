@@ -20,6 +20,8 @@ def _tables_in_expr(expr: Expression) -> set[str]:
 
 
 def _source_tables(node: PlanNode) -> set[str]:
+    if node.output_columns:
+        return {ref.table for ref in node.output_columns if ref.table}
     from common.plan import TableScan, IndexScan
     if isinstance(node, (TableScan, IndexScan)):
         return {node.table}
@@ -89,10 +91,11 @@ class JoinRuleRewriter:
             children=cross.children,
             estimated_rows=cross.estimated_rows,
             estimated_cost=cross.estimated_cost,
+            output_columns=cross.output_columns,
         )
 
         if not rest_preds:
             return theta
 
-        return Filter(condition=_make_condition(rest_preds), children=[theta])
+        return Filter(condition=_make_condition(rest_preds), children=[theta], output_columns=node.output_columns)
 

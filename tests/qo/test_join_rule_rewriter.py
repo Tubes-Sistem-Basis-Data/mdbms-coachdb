@@ -163,6 +163,40 @@ class TestJoinRuleRewriter(unittest.TestCase):
         self.assertIn(cond1, result.condition.conditions)
         self.assertIn(cond2, result.condition.conditions)
 
+    def test_output_columns_propagated_to_theta(self) -> None:
+        cols = [_col("a", "id"), _col("b", "id")]
+        cond = _eq(_col("a", "id"), _col("b", "id"))
+        cross = Join(kind=JoinKind.CROSS, children=[_scan("a"), _scan("b")], output_columns=cols)
+        plan = Filter(condition=cond, children=[cross])
+        result = self.apply(plan)
+        self.assertIsInstance(result, Join)
+        self.assertEqual(result.output_columns, cols)
+
+    def test_output_columns_propagated_to_remaining_filter(self) -> None:
+        filter_cols = [_col("a", "id"), _col("b", "id")]
+        cross_cols = [_col("a", "id"), _col("b", "id")]
+        join_cond = _eq(_col("a", "id"), _col("b", "id"))
+        rest_cond = Comparison(op=CompOp.GT, left=_col("a", "val"), right=_lit(0))
+        cross = Join(kind=JoinKind.CROSS, children=[_scan("a"), _scan("b")], output_columns=cross_cols)
+        plan = Filter(condition=_and(join_cond, rest_cond), children=[cross], output_columns=filter_cols)
+        result = self.apply(plan)
+        self.assertIsInstance(result, Filter)
+        self.assertEqual(result.output_columns, filter_cols)
+        self.assertEqual(result.children[0].output_columns, cross_cols)
+
+    def test_source_tables_via_output_columns_enables_alias_awareness(self) -> None:
+        # Simulasi post-binder: output_columns anak Cross berisi nama tabel nyata
+        # (bukan alias), _source_tables harus tetap bekerja via output_columns.
+        left_scan = TableScan(table="student", output_columns=[_col("student", "id")])
+        right_scan = TableScan(table="enrollment", output_columns=[_col("enrollment", "student_id")])
+        cross = Join(kind=JoinKind.CROSS, children=[left_scan, right_scan],
+                     output_columns=[_col("student", "id"), _col("enrollment", "student_id")])
+        cond = _eq(_col("student", "id"), _col("enrollment", "student_id"))
+        plan = Filter(condition=cond, children=[cross])
+        result = self.apply(plan)
+        self.assertIsInstance(result, Join)
+        self.assertEqual(result.kind, JoinKind.THETA)
+
 
 if __name__ == "__main__":
     unittest.main()
