@@ -54,7 +54,8 @@ class StorageManager(StorageManagerBase):
 
     def get_stats(self, table: str) -> TableStats:
         """Statistik tabel untuk cost model. Dipanggil QO."""
-        return TableStats(table=table, n_r=0, b_r=0, l_r=0.0, f_r=0, distinct={})
+        with self._lock:
+            return self._stats.get_stats(table)
 
     def scan(self, table: str) -> Iterator[Row]:
         """Iterasi seluruh baris tabel. Dipanggil QP."""
@@ -134,8 +135,11 @@ class StorageManager(StorageManagerBase):
         return 0
 
     def rebuild_indexes(self) -> None:
-        """Bangun ulang semua index dari isi tabel setelah recovery."""
-        return None
+        """Bangun ulang index dan statistik dari isi tabel setelah recovery."""
+        with self._lock:
+            self._index_manager.rebuild_all()
+            for table in self._catalog.list_tables():
+                self._stats.recount(table)
 
     def snapshot_to(self, path: str) -> None:
         """Salin seluruh data ke `path` (checkpoint, PITR)."""
