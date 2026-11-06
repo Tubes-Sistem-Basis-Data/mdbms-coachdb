@@ -191,31 +191,45 @@ class RecordManager:
             self._index_manager.on_update(table, old_values, normalized, rid)
         self._stats.invalidate(table)
 
-    def delete(self, table: str, rid: RID, lsn: LSN) -> None:
+    def delete(self, table: str, rid: RID, lsn: LSN | None) -> None:
+        self._check_rid_table(table, rid)
         schema = self._catalog.get_table_schema(table)
         values: tuple[Value, ...] | None = None
+        changed = False
         with self._lock:
             try:
                 frame = self._buffer.get_page(table, rid.page_id)
             except StorageError:
-                return
+                if lsn is None:
+                    return
+                raise StorageError(f"baris {rid} tidak ada") from None
             try:
                 data = SlottedPage.read_slot(frame.data, rid.slot)
                 if data is not None:
                     values = tuple(RecordCodec.decode(schema, data))
                     SlottedPage.mark_tombstone(frame.data, rid.slot)
-                    SlottedPage.set_page_lsn(frame.data, lsn)
+                    if lsn is not None:
+                        SlottedPage.set_page_lsn(frame.data, lsn)
+                    changed = True
+                elif SlottedPage.slot_status(frame.data, rid.slot) == SlotStatus.EMPTY:
+                    if lsn is not None:
+                        raise StorageError(f"baris {rid} tidak ada")
+                    # undo INSERT: slot EMPTY ikut jadi TOMBSTONE (D9).
+                    SlottedPage.mark_tombstone(frame.data, rid.slot)
+                    changed = True
+                elif lsn is not None:
+                    raise StorageError(f"baris {rid} tidak ada")
             except Exception:
                 self._buffer.unpin(frame, False)
                 raise
-            self._buffer.unpin(frame, values is not None, lsn)
+            self._buffer.unpin(frame, changed, lsn)
         if values is None:
             return
         self._index_manager.on_delete(table, values, rid)
         self._stats.on_delete(table)
         self._stats.invalidate(table)
 
-    def truncate(self, table: str, lsn: LSN = 0) -> int:
+    def delete_all(self, table: str, lsn: LSN | None) -> None:
         schema = self._catalog.get_table_schema(table)
         page_count = self._buffer._disk.num_pages(table)
         removed = 0
@@ -233,7 +247,7 @@ class RecordManager:
                             (RID(table, page_id, slot), tuple(RecordCodec.decode(schema, data)))
                         )
                         SlottedPage.mark_tombstone(frame.data, slot)
-                    if deleted:
+                    if deleted and lsn is not None:
                         SlottedPage.set_page_lsn(frame.data, lsn)
                 except Exception:
                     self._buffer.unpin(frame, False)
@@ -244,7 +258,6 @@ class RecordManager:
                 self._index_manager.on_delete(table, values, rid)
         if removed:
             self._stats.invalidate(table)
-        return removed
 
     def _indexed_columns_changed(
         self,

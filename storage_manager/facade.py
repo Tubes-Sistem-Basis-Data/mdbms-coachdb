@@ -82,12 +82,12 @@ class StorageManager(StorageManagerBase):
         self._records.update(table, rid, tuple(values), lsn)
 
     def delete(self, table: str, rid: RID, lsn: int | None) -> None:
-        """Hapus baris di RID (tombstone), idempoten. Dipanggil QP dan FRM."""
-        self._records.delete(table, rid, 0 if lsn is None else lsn)
+        """Hapus baris di RID (tombstone). `lsn=None` = undo/redo dari FRM (D9)."""
+        self._records.delete(table, rid, lsn)
 
     def delete_all(self, table: str, lsn: int | None) -> None:
         """Hapus seluruh baris tabel. Dipanggil QP untuk DELETE tanpa WHERE."""
-        self._records.truncate(table, 0 if lsn is None else lsn)
+        self._records.delete_all(table, lsn)
 
     def validate(self, table: str, values: list, rid: RID | None = None) -> list:
         """Cek nilai sesuai skema, raise SchemaViolationError jika tidak (D6)."""
