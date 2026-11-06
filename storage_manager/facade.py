@@ -67,15 +67,15 @@ class StorageManager(StorageManagerBase):
 
     def allocate_rid(self, table: str) -> RID:
         """Pesan slot kosong untuk INSERT. Dipanggil QP sebelum minta izin CCM."""
-        return RID(table=table, page_id=0, slot=0)
+        return self._records.allocate_rid(table)
 
     def release_rid(self, rid: RID) -> None:
         """Lepas RID yang batal dipakai karena INSERT tidak diizinkan. Dipanggil QP."""
-        return None
+        self._records.release_rid(rid)
 
     def insert(self, table: str, rid: RID, values: list, lsn: int | None) -> None:
-        """Tulis baris di RID, idempoten. `lsn=None` saat undo/redo dari FRM."""
-        return None
+        """Tulis baris di RID. `lsn=None` = upsert undo/redo dari FRM (D9)."""
+        self._records.insert(table, rid, tuple(values), lsn)
 
     def update(self, table: str, rid: RID, values: list, lsn: int | None) -> None:
         """Ganti seluruh nilai baris di RID, idempoten. Dipanggil QP dan FRM."""
@@ -90,8 +90,8 @@ class StorageManager(StorageManagerBase):
         return None
 
     def validate(self, table: str, values: list, rid: RID | None = None) -> list:
-        """Cek nilai sesuai skema, raise SchemaViolationError jika tidak. Dipanggil QP."""
-        return list(values)
+        """Cek nilai sesuai skema, raise SchemaViolationError jika tidak (D6)."""
+        return list(self._records.validate(table, tuple(values), rid))
 
     def create_table(self, schema: TableSchema) -> None:
         """Buat tabel baru dan catat di katalog. Dipanggil QP untuk CREATE TABLE."""
@@ -132,7 +132,10 @@ class StorageManager(StorageManagerBase):
 
     def bulk_load(self, table: str, rows: list[list]) -> int:
         """Isi banyak baris sekaligus tanpa log. Dipakai seeder."""
-        return 0
+        for row in rows:
+            rid = self._records.allocate_rid(table)
+            self._records.insert(table, rid, tuple(row), None)
+        return len(rows)
 
     def rebuild_indexes(self) -> None:
         """Bangun ulang index dan statistik dari isi tabel setelah recovery."""

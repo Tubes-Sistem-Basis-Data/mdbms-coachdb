@@ -90,6 +90,10 @@ class FakeCodec:
         return RECORD_SIZE
 
     @staticmethod
+    def max_record_size(schema) -> int:
+        return RECORD_SIZE * len(schema.columns)
+
+    @staticmethod
     def validate(schema: TableSchema, values: tuple) -> tuple:
         return tuple(values)
 
