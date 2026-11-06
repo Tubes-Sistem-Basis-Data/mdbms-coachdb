@@ -2,6 +2,7 @@ import unittest
 import struct
 
 from common.config import BLOCK_SIZE
+from common.errors import StorageError
 from storage_manager.page import SlottedPage, SlotStatus
 
 class TestSlottedPage(unittest.TestCase):
@@ -109,6 +110,15 @@ class TestSlottedPage(unittest.TestCase):
         self.assertEqual(SlottedPage.slot_status(buf, 100), SlotStatus.EMPTY)
         with self.assertRaises(IndexError):
             SlottedPage.mark_tombstone(buf, 100)
+    
+    def test_capacity_validation(self):
+        # Nilai tidak valid, harusnya raise StorageError
+        for invalid_val in [0, -1, -50, "100", 12.5, True, False, None]:
+            with self.subTest(val=invalid_val), self.assertRaises(StorageError):
+                SlottedPage.capacity(invalid_val)
+
+        # Record size yang sangat besar (melebihi ukuran blok) menghasilkan kapasitas 0
+        self.assertEqual(SlottedPage.capacity(BLOCK_SIZE * 2), 0)
 
 
 if __name__ == "__main__":

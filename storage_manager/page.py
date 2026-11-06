@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Optional
 
 from common.config import BLOCK_SIZE
+from common.errors import StorageError
 
 # Log Sequence Number, terhubung sebagai dependensi dari failure recovery manager.
 LSN = int
@@ -323,6 +324,13 @@ class SlottedPage:
         @param record_size (int) ukuran tetap satu record dalam byte
         
         @return int berupa jumlah slot yang dapat dimuat oleh satu page
+        @raise StorageError jika record_size bukan parameter valid (harus integer dan positif)
         """
+        if type(record_size) is not int:
+            raise StorageError(f"record_size is not a valid int type (type={type(record_size)})")
+
+        if record_size <= 0:
+            raise StorageError(f"record_size must be positive (record_size={record_size})")
+
         usable_size = BLOCK_SIZE - SlottedPage.DIR_START_OFFSET
-        return usable_size // (SlottedPage.SLOT_DIR_ENTRY_SIZE + record_size)
+        return max(0, usable_size // (SlottedPage.SLOT_DIR_ENTRY_SIZE + record_size))
