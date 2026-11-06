@@ -109,6 +109,12 @@ class _StubStorageManager(StorageManager):
     def delete_all(self, table: str, lsn: int | None) -> None:
         return None
 
+    def create_table(self, schema: TableSchema) -> None:
+        return None
+
+    def drop_table(self, table: str) -> None:
+        return None
+
     def create_index(self, info: IndexInfo) -> None:
         return None
 

@@ -27,6 +27,14 @@ class QueryOptimizerFacade(QueryOptimizer):
 
     def parse_query(self, sql: str) -> ParsedQuery:
         """Ubah teks SQL jadi ParsedQuery. Dipanggil QP."""
+        # TODO(QO-01/QO-02): ganti isi mock di bawah dengan pipeline asli:
+        #   tokens = self._lexer.tokenize(sql)          # QuerySyntaxError
+        #   parsed = self._parser.parse(tokens, sql)    # QuerySyntaxError
+        #   return self._binder.bind(parsed)            # SemanticError (QO3)
+        # Bungkus dengan try/except: MdbmsError diteruskan apa adanya, exception lain
+        # dibungkus jadi MdbmsError("kesalahan internal optimizer: ...") supaya client tidak mati.
+        # Ganti baru setelah parser BEGIN/COMMIT/ABORT milik QO2 siap, kalau tidak demo
+        # di main.py dan test_contract akan gagal.
         s = sql.strip().rstrip(";")
         if not s:
             raise QuerySyntaxError("mock: query kosong", position=0, token="")
@@ -52,4 +60,11 @@ class QueryOptimizerFacade(QueryOptimizer):
 
     def explain(self, query: ParsedQuery) -> str:
         """Tampilkan plan untuk perintah EXPLAIN."""
+        # TODO(QO-15):
+        # 1. before = query.plan; cost_before = self._cost_model.get_cost(before) jika ada
+        # 2. Optimasi salinan supaya query asli tidak berubah:
+        #    optimized = self.optimize_query(copy.deepcopy(query))
+        # 3. after = optimized.plan; cost_after = self._cost_model.get_cost(after)
+        # 4. return self._printer.build_explain(before, after, cost_before, cost_after)
+        # EXPLAIN tidak menyentuh CCM dan tidak mengeksekusi apa pun.
         return "mock plan"

@@ -10,14 +10,22 @@ from common.catalog import (
     TableStats,
 )
 from common.errors import (
+<<<<<<< Updated upstream
     TableNotFoundError,
     IndexDefinitionError,
     SchemaViolationError,
+=======
+    IndexDefinitionError,
+>>>>>>> Stashed changes
     LogError,
+    LogWriteError,
     MdbmsError,
     QuerySyntaxError,
+    RecoveryError,
+    SchemaViolationError,
     SemanticError,
     StorageError,
+    TableNotFoundError,
     TransactionAbortedError,
 )
 from common.expression import (
@@ -29,6 +37,7 @@ from common.expression import (
     Comparison,
     Expression,
     Literal,
+    Subquery,
 )
 from common.log import (
     CheckpointResult,
@@ -40,23 +49,27 @@ from common.log import (
 )
 from common.plan import (
     CreateIndex,
+    CreateTable,
     Delete,
+    DropTable,
     Filter,
     IndexScan,
     Insert,
     Join,
     JoinKind,
+    Limit,
     ParsedQuery,
     PlanNode,
     Project,
     QueryKind,
     Sort,
+    SubqueryScan,
     TableScan,
     TransactionCommand,
     Update,
 )
 from common.result import ExecutionResult
-from common.storage import RID, Row
+from common.storage import RID, Row, Value
 from common.transaction import (
     NO_RECORD,
     AccessResponse,
@@ -73,14 +86,17 @@ from common.transaction import (
 __all__ = [
     "TableNotFoundError", "IndexDefinitionError", "SchemaViolationError",
     "ColumnSchema", "DataType", "ForeignKey", "IndexInfo", "IndexKind", "TableSchema", "TableStats",
-    "LogError", "MdbmsError", "QuerySyntaxError", "SemanticError", "StorageError",
+    "IndexDefinitionError", "LogError", "LogWriteError", "MdbmsError", "QuerySyntaxError",
+    "RecoveryError", "SchemaViolationError", "SemanticError", "StorageError", "TableNotFoundError",
     "TransactionAbortedError",
     "And", "ArithOp", "BinaryOp", "ColumnRef", "CompOp", "Comparison", "Expression", "Literal",
+    "Subquery",
     "CheckpointResult", "LogKind", "LogRecord", "LogResult", "RecoveryResult", "RecoveryTarget",
-    "CreateIndex", "Delete", "Filter", "IndexScan", "Insert", "Join", "JoinKind", "ParsedQuery",
-    "PlanNode", "Project", "QueryKind", "Sort", "TableScan", "TransactionCommand", "Update",
+    "CreateIndex", "CreateTable", "Delete", "DropTable", "Filter", "IndexScan", "Insert", "Join",
+    "JoinKind", "Limit", "ParsedQuery", "PlanNode", "Project", "QueryKind", "Sort", "SubqueryScan",
+    "TableScan", "TransactionCommand", "Update",
     "ExecutionResult",
-    "RID", "Row",
+    "RID", "Row", "Value",
     "NO_RECORD", "AccessResponse", "AccessStatus", "Action", "ChangeOp", "DataChange",
     "ProtocolType", "ResourceId", "TxResult", "TxStatus",
 ]

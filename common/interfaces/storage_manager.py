@@ -57,6 +57,14 @@ class StorageManager(ABC):
         """Kosongkan tabel."""
 
     @abstractmethod
+    def create_table(self, schema: TableSchema) -> None:
+        """Buat tabel baru dan catat di katalog. Raise SemanticError jika nama sudah dipakai."""
+
+    @abstractmethod
+    def drop_table(self, table: str) -> None:
+        """Hapus tabel beserta index-nya. Raise TableNotFoundError jika tabel tidak ada."""
+
+    @abstractmethod
     def create_index(self, info: IndexInfo) -> None:
         """Bangun index dan catat di katalog."""
 
