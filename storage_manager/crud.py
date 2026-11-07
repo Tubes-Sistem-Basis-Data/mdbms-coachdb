@@ -1,4 +1,4 @@
-"""Record Manager: fungsi kosong."""
+"""Record Manager (SM-04..SM-07): CRUD di atas SlottedPage."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 class RecordManager:
-    """Record manager sementara."""
+    """Kelola record: validasi, CRUD idempoten, dan alokasi RID (T3, D9)."""
 
     def __init__(
         self,
