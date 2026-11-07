@@ -160,10 +160,12 @@ class RecordManager:
         with self._lock:
             try:
                 frame = self._buffer.get_page(table, rid.page_id)
-            except StorageError:
-                if lsn is None:
-                    raise StorageError(f"page {table}:{rid.page_id} tidak ada") from None
-                raise StorageError(f"baris {rid} tidak ada") from None
+            except (StorageError, KeyError):
+                if lsn is not None:
+                    raise StorageError(f"baris {rid} tidak ada") from None
+                # Upsert undo/redo: page pernah ada saat log ditulis (mis. sebelum crash).
+                self._ensure_page(table, rid.page_id, schema)
+                frame = self._buffer.get_page(table, rid.page_id)
             try:
                 existing = SlottedPage.read_slot(frame.data, rid.slot)
                 absent = existing is None
