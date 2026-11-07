@@ -199,7 +199,7 @@ class RecordManager:
         with self._lock:
             try:
                 frame = self._buffer.get_page(table, rid.page_id)
-            except StorageError:
+            except (StorageError, KeyError):
                 if lsn is None:
                     return
                 raise StorageError(f"baris {rid} tidak ada") from None
@@ -215,8 +215,12 @@ class RecordManager:
                     if lsn is not None:
                         raise StorageError(f"baris {rid} tidak ada")
                     # undo INSERT: slot EMPTY ikut jadi TOMBSTONE (D9).
-                    SlottedPage.mark_tombstone(frame.data, rid.slot)
-                    changed = True
+                    try:
+                        SlottedPage.mark_tombstone(frame.data, rid.slot)
+                        changed = True
+                    except IndexError:
+                        # Slot belum dialokasikan; SM2 menolak tombstone di sana.
+                        pass
                 elif lsn is not None:
                     raise StorageError(f"baris {rid} tidak ada")
             except Exception:
