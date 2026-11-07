@@ -6,6 +6,10 @@ and ``--scenario NAME``. Each case uses a temporary WAL.
 from __future__ import annotations
 
 import argparse
+from typing import Callable
+
+from common.interfaces import FailureRecoveryManager as FailureRecoveryManagerInterface
+from failure_recovery import FailureRecoveryManager as ConcreteFailureRecoveryManager
 
 from drivers.frm_scenarios import (
     FRMCaseContext,
@@ -17,8 +21,18 @@ from drivers.frm_scenarios import (
 )
 
 
+def _default_frm_factory(log_path: str) -> FailureRecoveryManagerInterface:
+    return ConcreteFailureRecoveryManager(log_path=log_path)
+
+
 class FRMTestDriver(_FRMScenarioCatalog):
     """Run cases, compare actual results, and report outcomes."""
+
+    def __init__(
+        self,
+        frm_factory: Callable[[str], FailureRecoveryManagerInterface] | None = None,
+    ) -> None:
+        super().__init__(frm_factory or _default_frm_factory)
 
     def run_case(self, scenario: FRMTestScenario) -> FRMTestResult:
         context = None

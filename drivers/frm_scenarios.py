@@ -6,17 +6,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from common.interfaces import FailureRecoveryManager as FailureRecoveryManagerInterface
 from common.log import LogKind, LogRecord, RecoveryTarget
 from common.storage import RID
 from common.transaction import NO_RECORD, ChangeOp, DataChange, TxStatus
-from failure_recovery import FailureRecoveryManager
 
 
 @dataclass
 class FRMCaseContext:
     temporary_dir: tempfile.TemporaryDirectory
     root: Path
-    frm: FailureRecoveryManager
+    frm: FailureRecoveryManagerInterface
     notes: list[str] = field(default_factory=list)
 
 
@@ -99,7 +99,8 @@ class DemoConcurrencyControl:
 class _FRMScenarioCatalog:
     """Define isolated FRM cases, fixtures, actions, and expected results."""
 
-    def __init__(self) -> None:
+    def __init__(self, frm_factory: Callable[[str], FailureRecoveryManagerInterface]) -> None:
+        self._frm_factory = frm_factory
         self.cases: list[FRMTestScenario] = [
             self._case("wal", "FR-01/02", "WAL records data changes and transaction events",
                        self._wal, {
@@ -157,12 +158,11 @@ class _FRMScenarioCatalog:
         return FRMTestScenario(name, self._setup, [action], expected, self._cleanup,
                                requirement, description)
 
-    @staticmethod
-    def _setup() -> FRMCaseContext:
+    def _setup(self) -> FRMCaseContext:
         temporary_dir = tempfile.TemporaryDirectory(prefix="coachdb-frm-driver-")
         root = Path(temporary_dir.name)
         try:
-            frm = FailureRecoveryManager(log_path=str(root / "wal.log"))
+            frm = self._frm_factory(str(root / "wal.log"))
         except Exception:
             temporary_dir.cleanup()
             raise
@@ -176,7 +176,7 @@ class _FRMScenarioCatalog:
             context.temporary_dir.cleanup()
 
     @staticmethod
-    def _write(frm: FailureRecoveryManager, kind: LogKind, tx_id: int | None = None,
+    def _write(frm: FailureRecoveryManagerInterface, kind: LogKind, tx_id: int | None = None,
                change: DataChange | None = None) -> int:
         result = frm.write_log(LogRecord(kind, tx_id=tx_id, change=change))
         _check(result.ok and result.lsn is not None, f"write_log({kind.value}) failed: {result.message}")
@@ -192,10 +192,9 @@ class _FRMScenarioCatalog:
         if "belum diimplementasikan" in lowered or "not implemented" in lowered:
             raise FeatureNotReady(f"{operation} is not implemented yet")
 
-    @staticmethod
-    def _reopen(context: FRMCaseContext) -> FailureRecoveryManager:
+    def _reopen(self, context: FRMCaseContext) -> FailureRecoveryManagerInterface:
         context.frm.close()
-        context.frm = FailureRecoveryManager(log_path=str(context.root / "wal.log"))
+        context.frm = self._frm_factory(str(context.root / "wal.log"))
         return context.frm
 
     def _wal(self, context: FRMCaseContext) -> dict:
@@ -221,7 +220,7 @@ class _FRMScenarioCatalog:
         last_lsn = self._write(frm, LogKind.COMMIT, 7)
         _check(frm.flush_log(last_lsn), "flush before reopening failed")
         frm.close()
-        reopened = FailureRecoveryManager(log_path=str(context.root / "wal.log"))
+        reopened = self._frm_factory(str(context.root / "wal.log"))
         try:
             kinds = [r.kind.value for r in reopened.read_log(7)]
             next_lsn = self._write(reopened, LogKind.BEGIN, 8)

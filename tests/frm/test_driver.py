@@ -39,6 +39,21 @@ class TestFRMDriver(unittest.TestCase):
         self.assertTrue(all(not result.passed for result in results))
         self.assertTrue(all(result.actual is not None for result in results))
 
+    def test_factory_is_used_for_setup_and_reopen(self) -> None:
+        paths = []
+
+        def factory(log_path):
+            paths.append(log_path)
+            return FailureRecoveryManager(log_path=log_path)
+
+        driver = FRMTestDriver(frm_factory=factory)
+        scenario = next(case for case in driver.cases if case.name == "wal-reopen")
+        result = driver.run_case(scenario)
+
+        self.assertTrue(result.passed)
+        self.assertEqual(len(paths), 2)
+        self.assertEqual(paths[0], paths[1])
+
     def test_scenario_failure_is_not_reported_as_passed(self) -> None:
         class FailingDriver(FRMTestDriver):
             def _wal(self, context) -> None:
