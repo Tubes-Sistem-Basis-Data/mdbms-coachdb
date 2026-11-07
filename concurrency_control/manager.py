@@ -1,5 +1,5 @@
 import threading
-from common.errors import MdbmsError
+from common.errors import LogError, MdbmsError
 from common.interfaces import ConcurrencyControlManager, FailureRecoveryManager
 from common.transaction import (
     AccessResponse,
@@ -67,7 +67,14 @@ class CCManager(ConcurrencyControlManager):
             self.schedule.record(tx_id, resource, action)
         if action is Action.READ:
             return response
-        lsn = self._bridge.log_write(tx_id, change.op, change.table, change.rid, change.before, change.after)
+        try:
+            lsn = self._bridge.log_write(tx_id, change.op, change.table, change.rid, change.before, change.after)
+        except LogError as exc:
+            self.abort(tx_id)
+            return AccessResponse(
+                status=AccessStatus.ABORTED,
+                message=f"T{tx_id} dibatalkan karena pencatatan log gagal: {exc}",
+            )
         return AccessResponse(status=AccessStatus.ALLOWED, lsn=lsn)
 
     def commit(self, tx_id: int) -> TxResult:
