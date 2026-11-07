@@ -139,7 +139,8 @@ class WalLogger(LogWriter, LogFlusher):
         return self.append(LogRecord(LogKind.ABORT, tx_id=tx_id))
 
     def log_clr(self, tx_id: int, rid: RID, before, after) -> int:
-        # Keputusan desain #6: undo idempoten tanpa CLR. Ditentukan lagi di FR-04.
+        # Keputusan desain #6 (FR-04): tidak ada CLR; undo idempoten.
+        # Sengaja no-op agar kontrak LogWriter tetap kompatibel.
         return 0
 
     def log_checkpoint_begin(self) -> int:

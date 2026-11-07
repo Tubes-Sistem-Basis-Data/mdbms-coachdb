@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from common import config
-from common.errors import LogError
+from common.errors import LogError, MdbmsError
 from common.interfaces import ConcurrencyControlManager, StorageManager
 from common.interfaces import FailureRecoveryManager as FailureRecoveryManagerBase
 from common.log import (
@@ -20,6 +20,8 @@ from failure_recovery.checkpoint.checkpoint_manager import CheckpointManager
 from failure_recovery.checkpoint.checkpoint_store import CheckpointStore
 from failure_recovery.log.log_reader import LogReader
 from failure_recovery.log.wal_logger import WalLogger
+from failure_recovery.results import RollbackResult
+from failure_recovery.rollback.rollback_manager import RollbackManager
 
 
 class FailureRecoveryManager(FailureRecoveryManagerBase):
@@ -63,7 +65,57 @@ class FailureRecoveryManager(FailureRecoveryManagerBase):
 
     def rollback(self, tx_id: int) -> TxResult:
         """Undo perubahan transaksi lewat RollbackManager. Dipanggil CCM.abort."""
-        return TxResult(tx_id=tx_id, status=TxStatus.FAILED, ok=False, message="belum diimplementasikan")
+        if self._sm is None:
+            return TxResult(
+                tx_id=tx_id,
+                status=TxStatus.FAILED,
+                ok=False,
+                message="Dependensi SM belum dipasang",
+            )
+        self._rollback_interface = RollbackManager(
+            self._log_writer,
+            self._log_flusher,
+            self._log_reader,
+            self._sm,
+        )
+        try:
+            result = self._rollback_interface.rollback(tx_id)
+        except MdbmsError as exc:
+            return TxResult(
+                tx_id=tx_id,
+                status=TxStatus.FAILED,
+                ok=False,
+                message=str(exc),
+            )
+        if result is RollbackResult.DONE:
+            return TxResult(tx_id=tx_id, status=TxStatus.ABORTED, ok=True)
+        if result is RollbackResult.ALREADY_ABORT:
+            return TxResult(
+                tx_id=tx_id,
+                status=TxStatus.ABORTED,
+                ok=True,
+                message=f"T{tx_id} sudah abort",
+            )
+        if result is RollbackResult.COMMITTED:
+            return TxResult(
+                tx_id=tx_id,
+                status=TxStatus.COMMITTED,
+                ok=False,
+                message=f"T{tx_id} sudah commit",
+            )
+        if result is RollbackResult.UNKNOWN_TX:
+            return TxResult(
+                tx_id=tx_id,
+                status=TxStatus.FAILED,
+                ok=False,
+                message=f"T{tx_id} tidak dikenal",
+            )
+        return TxResult(
+            tx_id=tx_id,
+            status=TxStatus.FAILED,
+            ok=False,
+            message="Rollback tidak menghasilkan status",
+        )
 
     def checkpoint(self) -> CheckpointResult:
         """Buat checkpoint lewat CheckpointManager."""
