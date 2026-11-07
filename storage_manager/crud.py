@@ -66,7 +66,8 @@ class RecordManager:
         with self._lock:
             try:
                 frame = self._buffer.get_page(table, rid.page_id)
-            except StorageError:
+            except (StorageError, KeyError):
+                # Page tidak ada, misalnya file tabel belum pernah dibuat.
                 return None
             try:
                 header = SlottedPage.read_header(frame.data)
