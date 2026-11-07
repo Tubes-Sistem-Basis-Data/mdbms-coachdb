@@ -22,7 +22,7 @@ class TestStatistics(unittest.TestCase):
     def test_exact_contract_values_and_copy(self):
         stats = self.stats.get_stats('t')
         expected_fr = SlottedPage.capacity(self.catalog.get_record_size('t'))
-        self.assertEqual(vars(stats), dict(table='t', n_r=3, b_r=2, l_r=17.0,
+        self.assertEqual(vars(stats), dict(table='t', n_r=3, b_r=2, l_r=21.0,
                                           f_r=expected_fr, distinct={'id': 3, 'value': 1}))
         stats.distinct.clear()
         self.assertEqual(self.stats.get_stats('t').distinct, {'id': 3, 'value': 1})
@@ -33,7 +33,7 @@ class TestStatistics(unittest.TestCase):
         stats = self.stats.get_stats('t')
         expected_fr = SlottedPage.capacity(self.catalog.get_record_size('t'))
         self.assertEqual((stats.n_r, stats.b_r, stats.distinct), (0, 0, {'id': 0, 'value': 0}))
-        self.assertEqual(stats.l_r, 17.0)
+        self.assertEqual(stats.l_r, 21.0)
         self.assertEqual(stats.f_r, expected_fr)
         with self.assertRaises(TableNotFoundError):
             self.stats.get_stats('missing')

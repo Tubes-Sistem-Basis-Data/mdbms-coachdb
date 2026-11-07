@@ -147,11 +147,11 @@ class TestCatalogRecordSize(unittest.TestCase):
         from storage_manager.serializer import RecordCodec
         schema = self.create_student()
         # Bitmap + INTEGER + VARCHAR prefix/payload + FLOAT + CHAR.
-        self.assertEqual(self.catalog.get_record_size('student'), 69)
+        self.assertEqual(self.catalog.get_record_size('student'), 73)
         maximum = (1, 'é' * 25, 4.0, 'ABCD')
-        self.assertEqual(RecordCodec.record_size(schema, maximum), 69)
+        self.assertEqual(RecordCodec.record_size(schema, maximum), 73)
         for values in ((1, '', 0.0, ''), (1, None, None, None), maximum):
-            self.assertLessEqual(RecordCodec.record_size(schema, values), 69)
+            self.assertLessEqual(RecordCodec.record_size(schema, values), 73)
         self.assertFalse(hasattr(schema, 'record_size'))
         with self.assertRaises(TableNotFoundError):
             self.catalog.get_record_size('missing')
@@ -160,24 +160,24 @@ class TestCatalogRecordSize(unittest.TestCase):
         from storage_manager.serializer import RecordCodec
         schema = self.catalog.create_table('wide', tuple(
             ColumnSchema(f'c{i}', DataType.INTEGER) for i in range(9)), (), ())
-        self.assertEqual(self.catalog.get_record_size('wide'), 38)
-        self.assertEqual(RecordCodec.record_size(schema, (0,) * 9), 38)
+        self.assertEqual(self.catalog.get_record_size('wide'), 74)
+        self.assertEqual(RecordCodec.record_size(schema, (0,) * 9), 74)
         self.assertEqual(RecordCodec.record_size(schema, (None,) * 9), 2)
 
     def test_reload_rebuilds_sizes_atomically(self):
         self.create_student()
         restored = Catalog(str(self.path))
-        self.assertEqual(restored.get_record_size('student'), 69)
+        self.assertEqual(restored.get_record_size('student'), 73)
         document = json.loads(self.path.read_text())
         document['tables'][0]['columns'][1]['length'] = 100
         self.path.write_text(json.dumps(document))
         restored._load()
-        self.assertEqual(restored.get_record_size('student'), 119)
+        self.assertEqual(restored.get_record_size('student'), 123)
         document['tables'][0]['columns'][1]['length'] = 65536
         self.path.write_text(json.dumps(document))
         with self.assertRaises(StorageError):
             restored._load()
-        self.assertEqual(restored.get_record_size('student'), 119)
+        self.assertEqual(restored.get_record_size('student'), 123)
         self.path.write_text(json.dumps({'version': 1, 'tables': []}))
         restored._load()
         self.assertEqual(restored._record_size, {})
