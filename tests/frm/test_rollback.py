@@ -27,6 +27,14 @@ class RollbackManagerTest(unittest.TestCase):
         self.addCleanup(self.writer.close)
         self.sm = StorageManager(data_dir=self.temp_dir.name, buffer_frames=4)
         self.addCleanup(self.sm.close)
+        from common.catalog import ColumnSchema, DataType
+
+        self.sm._catalog.create_table(
+            "student",
+            (ColumnSchema("id", DataType.INTEGER), ColumnSchema("name", DataType.VARCHAR, 50)),
+            (),
+            (),
+        )
         self.tx_id = 7
         self.writer.log_begin(self.tx_id)
         self.manager = RollbackManager(
@@ -72,8 +80,8 @@ class RollbackManagerTest(unittest.TestCase):
     def test_rollback_mengundo_perubahan_dengan_urutan_lsn_terbalik(self) -> None:
         first = RID("student", 1, 1)
         second = RID("student", 1, 2)
-        self.tambahkan_perubahan_data(ChangeOp.UPDATE, first, [1], [2])
-        self.tambahkan_perubahan_data(ChangeOp.DELETE, second, [3], [])
+        self.tambahkan_perubahan_data(ChangeOp.UPDATE, first, [1, None], [2, None])
+        self.tambahkan_perubahan_data(ChangeOp.DELETE, second, [3, None], [])
 
         self.assertEqual(self.manager.rollback(self.tx_id), RollbackResult.DONE)
 
@@ -109,13 +117,13 @@ class RollbackManagerTest(unittest.TestCase):
 
     def test_undo_dengan_storage_manager_asli_menghasilkan_done(self) -> None:
         rid = RID("student", 1, 2)
-        self.tambahkan_perubahan_data(ChangeOp.UPDATE, rid, [1], [2])
+        self.tambahkan_perubahan_data(ChangeOp.UPDATE, rid, [1, None], [2, None])
 
         self.assertEqual(self.manager.rollback(self.tx_id), RollbackResult.DONE)
 
     def test_rollback_ulang_tidak_mengulangi_undo(self) -> None:
         rid = RID("student", 1, 2)
-        self.tambahkan_perubahan_data(ChangeOp.INSERT, rid, [], [1])
+        self.tambahkan_perubahan_data(ChangeOp.INSERT, rid, [], [1, None])
 
         self.assertEqual(self.manager.rollback(self.tx_id), RollbackResult.DONE)
         self.assertEqual(
@@ -125,7 +133,7 @@ class RollbackManagerTest(unittest.TestCase):
 
     def test_record_abort_tersimpan_di_wal_asli(self) -> None:
         rid = RID("student", 1, 2)
-        self.tambahkan_perubahan_data(ChangeOp.UPDATE, rid, [1], [2])
+        self.tambahkan_perubahan_data(ChangeOp.UPDATE, rid, [1, None], [2, None])
 
         self.manager.rollback(self.tx_id)
 
