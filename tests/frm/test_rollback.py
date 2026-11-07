@@ -117,13 +117,13 @@ class RollbackManagerTest(unittest.TestCase):
 
     def test_undo_dengan_storage_manager_asli_menghasilkan_done(self) -> None:
         rid = RID("student", 1, 2)
-        self.tambahkan_perubahan_data(ChangeOp.UPDATE, rid, [1], [2])
+        self.tambahkan_perubahan_data(ChangeOp.UPDATE, rid, [1, None], [2, None])
 
         self.assertEqual(self.manager.rollback(self.tx_id), RollbackResult.DONE)
 
     def test_rollback_ulang_tidak_mengulangi_undo(self) -> None:
         rid = RID("student", 1, 2)
-        self.tambahkan_perubahan_data(ChangeOp.INSERT, rid, [], [1])
+        self.tambahkan_perubahan_data(ChangeOp.INSERT, rid, [], [1, None])
 
         self.assertEqual(self.manager.rollback(self.tx_id), RollbackResult.DONE)
         self.assertEqual(
@@ -133,7 +133,7 @@ class RollbackManagerTest(unittest.TestCase):
 
     def test_record_abort_tersimpan_di_wal_asli(self) -> None:
         rid = RID("student", 1, 2)
-        self.tambahkan_perubahan_data(ChangeOp.UPDATE, rid, [1], [2])
+        self.tambahkan_perubahan_data(ChangeOp.UPDATE, rid, [1, None], [2, None])
 
         self.manager.rollback(self.tx_id)
 

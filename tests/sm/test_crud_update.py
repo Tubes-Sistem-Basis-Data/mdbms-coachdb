@@ -120,9 +120,15 @@ class TestUpdate(BaseUpdateTest):
     def test_page_tidak_ada(self) -> None:
         with self.assertRaises(StorageError):
             self.records.update("student", RID("student", 7, 0), (1, 20), 1)
-        with self.assertRaises(StorageError):
-            self.records.update("student", RID("student", 7, 0), (1, 20), None)
         self.assertEqual(self.stats.invalidations, 0)
+
+    def test_page_tidak_ada_lsn_none_membuat_page(self) -> None:
+        rid = RID("student", 7, 0)
+        self.records.update("student", rid, (1, 20), None)
+        row = self.fetch(rid)
+        assert row is not None
+        self.assertEqual(row.values, [1, 20])
+        self.assertEqual(self.buffer._frames[("student", 7)].page_lsn, 0)
 
     def test_pin_count_kembali_nol(self) -> None:
         self.put([(1, 10)])
