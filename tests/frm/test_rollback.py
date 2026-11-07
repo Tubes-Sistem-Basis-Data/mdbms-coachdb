@@ -27,6 +27,14 @@ class RollbackManagerTest(unittest.TestCase):
         self.addCleanup(self.writer.close)
         self.sm = StorageManager(data_dir=self.temp_dir.name, buffer_frames=4)
         self.addCleanup(self.sm.close)
+        from common.catalog import ColumnSchema, DataType
+
+        self.sm._catalog.create_table(
+            "student",
+            (ColumnSchema("id", DataType.INTEGER), ColumnSchema("name", DataType.VARCHAR, 50)),
+            (),
+            (),
+        )
         self.tx_id = 7
         self.writer.log_begin(self.tx_id)
         self.manager = RollbackManager(
@@ -72,8 +80,8 @@ class RollbackManagerTest(unittest.TestCase):
     def test_rollback_mengundo_perubahan_dengan_urutan_lsn_terbalik(self) -> None:
         first = RID("student", 1, 1)
         second = RID("student", 1, 2)
-        self.tambahkan_perubahan_data(ChangeOp.UPDATE, first, [1], [2])
-        self.tambahkan_perubahan_data(ChangeOp.DELETE, second, [3], [])
+        self.tambahkan_perubahan_data(ChangeOp.UPDATE, first, [1, None], [2, None])
+        self.tambahkan_perubahan_data(ChangeOp.DELETE, second, [3, None], [])
 
         self.assertEqual(self.manager.rollback(self.tx_id), RollbackResult.DONE)
 
