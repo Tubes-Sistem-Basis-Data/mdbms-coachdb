@@ -10,25 +10,25 @@ from common.catalog import ColumnSchema, DataType, TableSchema
 from storage_manager.errors import SchemaViolationError
 from storage_manager.types import Value
 
-INTEGER_MIN = -(2 ** 31)
-INTEGER_MAX = 2 ** 31 - 1
+INTEGER_MIN = -(2 ** 63)
+INTEGER_MAX = 2 ** 63 - 1
 
 
 class RecordCodec:  # Encode/decode nilai dan record
 
     @staticmethod
     def encode_integer(value: int) -> bytes:
-        # INTEGER -> 4 bytes big-endian signed.
+        # INTEGER -> 8 bytes big-endian signed.
         if isinstance(value, bool) or not isinstance(value, int):
             raise SchemaViolationError(f"INTEGER butuh nilai int, dapat {type(value).__name__}")
         if not (INTEGER_MIN <= value <= INTEGER_MAX):
-            raise SchemaViolationError(f"INTEGER di luar rentang 32-bit: {value}")
-        return struct.pack(">i", value)
+            raise SchemaViolationError(f"INTEGER di luar rentang 64-bit: {value}")
+        return struct.pack(">q", value)
 
     @staticmethod
     def decode_integer(data: bytes) -> int:
-        # 4 bytes big-endian signed -> INTEGER.
-        return struct.unpack(">i", data)[0]
+        # 8 bytes big-endian signed -> INTEGER.
+        return struct.unpack(">q", data)[0]
 
     @staticmethod
     def encode_float(value: float) -> bytes:
@@ -85,7 +85,7 @@ class RecordCodec:  # Encode/decode nilai dan record
         # Ukuran byte field panjang tetap (INTEGER/FLOAT/CHAR). VARCHAR variabel.
         match column.type:
             case DataType.INTEGER:
-                return 4
+                return 8
             case DataType.FLOAT:
                 return 8
             case DataType.CHAR:
@@ -167,7 +167,7 @@ class RecordCodec:  # Encode/decode nilai dan record
                             f"Kolom {col.name} (INTEGER) butuh int, dapat {type(val).__name__}"
                         )
                     if not (INTEGER_MIN <= val <= INTEGER_MAX):
-                        raise SchemaViolationError(f"Kolom {col.name} INTEGER di luar rentang 32-bit")
+                        raise SchemaViolationError(f"Kolom {col.name} INTEGER di luar rentang 64-bit")
                 case DataType.FLOAT:
                     if isinstance(val, bool) or not isinstance(val, (int, float)):
                         raise SchemaViolationError(
