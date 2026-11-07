@@ -10,7 +10,7 @@ from pathlib import Path
 from common.interfaces import FailureRecoveryManager as FailureRecoveryManagerBase
 from common.log import LogKind, LogRecord, LogResult
 from common.storage import RID
-from common.transaction import ChangeOp, DataChange
+from common.transaction import NO_RECORD, ChangeOp, DataChange, TxStatus
 from failure_recovery import FailureRecoveryManager
 from failure_recovery.log import codec
 
@@ -122,6 +122,118 @@ class TestDependensi(FacadeWalTestCase):
     def test_close_idempoten(self):
         self.frm.close()
         self.frm.close()
+
+
+class _FakeStorageManager:
+    """SM minimal untuk memverifikasi wiring rollback di facade."""
+
+    def __init__(self) -> None:
+        self.rows: dict[RID, list] = {}
+
+    def insert(self, table: str, rid: RID, values: list, lsn: int | None) -> None:
+        self.rows[rid] = list(values)
+
+    def update(self, table: str, rid: RID, values: list, lsn: int | None) -> None:
+        self.rows[rid] = list(values)
+
+    def delete(self, table: str, rid: RID, lsn: int | None) -> None:
+        self.rows.pop(rid, None)
+
+
+class _GagalStorageManager(_FakeStorageManager):
+    def delete(self, table: str, rid: RID, lsn: int | None) -> None:
+        from common.errors import StorageError
+
+        raise StorageError("gagal hapus")
+
+
+class TestRollbackFacade(FacadeWalTestCase):
+    def catat(
+        self,
+        tx_id: int,
+        op: ChangeOp,
+        rid: RID,
+        before,
+        after,
+    ) -> None:
+        hasil = self.frm.write_log(
+            LogRecord(
+                kind=LogKind.DATA,
+                tx_id=tx_id,
+                change=DataChange(
+                    table=rid.table,
+                    rid=rid,
+                    op=op,
+                    before=before,
+                    after=after,
+                ),
+            )
+        )
+        self.assertTrue(hasil.ok)
+
+    def test_rollback_tanpa_dependensi_mengembalikan_failed(self) -> None:
+        hasil = self.frm.rollback(1)
+        self.assertIs(hasil.status, TxStatus.FAILED)
+        self.assertFalse(hasil.ok)
+        self.assertTrue(hasil.message)
+
+    def test_rollback_mendelegasikan_ke_rollback_manager(self) -> None:
+        sm = _FakeStorageManager()
+        rid = RID("student", 0, 0)
+        self.frm.write_log(LogRecord(LogKind.BEGIN, tx_id=1))
+        self.catat(1, ChangeOp.INSERT, rid, NO_RECORD, [1, "A"])
+        sm.rows[rid] = [1, "A"]
+        self.frm.set_dependencies(sm, ccm=None)
+
+        hasil = self.frm.rollback(1)
+
+        self.assertIs(hasil.status, TxStatus.ABORTED)
+        self.assertTrue(hasil.ok)
+        self.assertNotIn(rid, sm.rows)
+        self.assertEqual(
+            [record.kind for record in self.frm.read_log(1)],
+            [LogKind.BEGIN, LogKind.DATA, LogKind.ABORT_REQUEST, LogKind.ABORT],
+        )
+
+    def test_rollback_transaksi_committed_tidak_ok(self) -> None:
+        self.frm.write_log(LogRecord(LogKind.BEGIN, tx_id=1))
+        self.frm.write_log(LogRecord(LogKind.COMMIT, tx_id=1))
+        self.frm.set_dependencies(_FakeStorageManager(), ccm=None)
+
+        hasil = self.frm.rollback(1)
+
+        self.assertIs(hasil.status, TxStatus.COMMITTED)
+        self.assertFalse(hasil.ok)
+
+    def test_rollback_transaksi_tidak_dikenal_gagal(self) -> None:
+        self.frm.set_dependencies(_FakeStorageManager(), ccm=None)
+
+        hasil = self.frm.rollback(99)
+
+        self.assertIs(hasil.status, TxStatus.FAILED)
+        self.assertFalse(hasil.ok)
+
+    def test_rollback_transaksi_sudah_abort_ok(self) -> None:
+        self.frm.write_log(LogRecord(LogKind.BEGIN, tx_id=1))
+        self.frm.write_log(LogRecord(LogKind.ABORT, tx_id=1))
+        self.frm.set_dependencies(_FakeStorageManager(), ccm=None)
+
+        hasil = self.frm.rollback(1)
+
+        self.assertIs(hasil.status, TxStatus.ABORTED)
+        self.assertTrue(hasil.ok)
+
+    def test_rollback_error_sm_mengembalikan_failed(self) -> None:
+        rid = RID("student", 0, 0)
+        self.frm.write_log(LogRecord(LogKind.BEGIN, tx_id=1))
+        self.catat(1, ChangeOp.INSERT, rid, NO_RECORD, [1])
+        self.frm.set_dependencies(_GagalStorageManager(), ccm=None)
+
+        hasil = self.frm.rollback(1)
+
+        self.assertIs(hasil.status, TxStatus.FAILED)
+        self.assertFalse(hasil.ok)
+        self.assertIn("gagal hapus", hasil.message)
 
 
 if __name__ == "__main__":

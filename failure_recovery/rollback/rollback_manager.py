@@ -14,7 +14,12 @@ from failure_recovery.ports import (
 
 
 class RollbackManager(RollbackInterface):
-    """Membatalkan transaksi dengan undo idempoten dan menulis CLR."""
+    """Membatalkan transaksi dengan undo idempoten tanpa CLR.
+
+    Keputusan desain #6: tidak ada catatan CLR. Idempotensi dicapai karena
+    operasi insert/update/delete SM idempoten, sehingga undo aman diulang
+    setelah crash tanpa perlu menandai perubahan yang sudah dibatalkan.
+    """
 
     def __init__(
         self,
@@ -49,22 +54,8 @@ class RollbackManager(RollbackInterface):
         for record in records:
             if record.kind is not LogKind.DATA or record.change is None:
                 continue
-            if any(
-                clr.kind.name == "CLR"
-                and getattr(clr, "undo_lsn", None) == record.lsn
-                for clr in records
-            ):
-                continue
 
             self._undo_record(record)
-            change = record.change
-            clr_lsn = self._log_writer.log_clr(
-                tx_id,
-                change.rid,
-                change.after,
-                change.before,
-            )
-            self._log_flusher.flush_log_until(clr_lsn)
 
         abort_end_lsn = self._log_writer.log_abort_end(tx_id)
         self._log_flusher.flush_log_until(abort_end_lsn)

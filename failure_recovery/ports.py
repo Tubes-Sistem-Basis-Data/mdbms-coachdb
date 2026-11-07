@@ -47,7 +47,7 @@ class LogWriter(ABC):
 
     @abstractmethod
     def log_clr(self, tx_id: int, rid: RID, before, after) -> int:
-        """Catat CLR dan kembalikan LSN."""
+        """Keputusan desain #6: tidak ada CLR. Implementasi boleh no-op."""
 
     @abstractmethod
     def log_checkpoint_begin(self) -> int:
