@@ -122,8 +122,12 @@ class RecordManager:
         with self._lock:
             try:
                 frame = self._buffer.get_page(table, rid.page_id)
-            except KeyError:
-                raise StorageError(f"page {table}:{rid.page_id} tidak ada") from None
+            except (StorageError, KeyError):
+                if lsn is not None:
+                    raise StorageError(f"page {table}:{rid.page_id} tidak ada") from None
+                # Upsert undo/redo: page pernah ada saat log ditulis (mis. sebelum crash).
+                self._ensure_page(table, rid.page_id, schema)
+                frame = self._buffer.get_page(table, rid.page_id)
             try:
                 existing = SlottedPage.read_slot(frame.data, rid.slot)
                 changed = existing != data
@@ -172,6 +176,13 @@ class RecordManager:
     def _check_rid_table(table: str, rid: RID) -> None:
         if rid.table != table:
             raise StorageError(f"RID {rid} bukan milik tabel {table}")
+
+    def _ensure_page(self, table: str, page_id: int, schema: TableSchema) -> None:
+        """Buat page-page kosong sampai page_id ada (upsert undo/redo, D9)."""
+        record_size = RecordCodec.max_record_size(schema)
+        while self._buffer._disk.num_pages(table) <= page_id:
+            frame = self._buffer.new_page(table, record_size)
+            self._buffer.unpin(frame, False)
 
     def _find_slot(self, table: str) -> tuple[Frame, int]:
         schema = self._catalog.get_table_schema(table)
