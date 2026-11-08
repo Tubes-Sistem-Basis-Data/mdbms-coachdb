@@ -56,7 +56,7 @@ class TestBlockNestedLoopJoin(unittest.TestCase):
     def setUp(self) -> None:
         self.ctx = ExecContext(tx_id=1, sm=None, ccm=None)
 
-    def test_cross_join_outputs_all_pairs_in_left_major_order_by_blocks(self) -> None:
+    def test_cross_join_rescans_right_for_each_bounded_left_block(self) -> None:
         left_schema = OutputSchema([ColumnBinding("l", "id", DataType.INTEGER)])
         right_schema = OutputSchema([ColumnBinding("r", "id", DataType.INTEGER)])
         left = ListOperator(left_schema, [(1,), (2,), (3,)])
@@ -67,16 +67,16 @@ class TestBlockNestedLoopJoin(unittest.TestCase):
         )
 
         operator.open(self.ctx)
-        self.assertEqual(right.close_calls, 1)
+        self.assertEqual((right.open_calls, right.close_calls), (0, 0))
         rows = drain(operator)
         operator.close()
 
         self.assertEqual([row.values for row in rows], [
-            (1, 10), (1, 20), (2, 10), (2, 20), (3, 10), (3, 20),
+            (1, 10), (2, 10), (1, 20), (2, 20), (3, 10), (3, 20),
         ])
         self.assertTrue(all(row.rid is None for row in rows))
         self.assertEqual((left.open_calls, left.close_calls), (1, 1))
-        self.assertEqual((right.open_calls, right.close_calls), (1, 1))
+        self.assertEqual((right.open_calls, right.close_calls), (2, 2))
 
     def test_theta_join_evaluates_on_the_combined_row(self) -> None:
         left_schema = OutputSchema([ColumnBinding("student", "id", DataType.INTEGER)])
@@ -214,7 +214,7 @@ class TestBlockNestedLoopJoin(unittest.TestCase):
 
         self.assertEqual(len(rows), 4)
 
-    def test_empty_input_produces_no_rows_and_closes_children(self) -> None:
+    def test_empty_outer_input_does_not_open_inner_input(self) -> None:
         schema = OutputSchema([ColumnBinding("t", "id", DataType.INTEGER)])
         left = ListOperator(schema, [])
         right = ListOperator(schema, [(1,)])
@@ -227,9 +227,9 @@ class TestBlockNestedLoopJoin(unittest.TestCase):
         operator.close()
 
         self.assertEqual(left.close_calls, 1)
-        self.assertEqual(right.close_calls, 1)
+        self.assertEqual((right.open_calls, right.close_calls), (0, 0))
 
-    def test_child_failure_during_materialization_closes_both_children(self) -> None:
+    def test_child_failure_during_rescan_closes_both_children(self) -> None:
         schema = OutputSchema([ColumnBinding("t", "id", DataType.INTEGER)])
         left = ListOperator(schema, [(1,)])
         right = ListOperator(schema, [], fail_on_next=True)
@@ -237,11 +237,27 @@ class TestBlockNestedLoopJoin(unittest.TestCase):
             left, right, OutputSchema(schema.columns + schema.columns), JoinKind.CROSS,
         )
 
+        operator.open(self.ctx)
         with self.assertRaisesRegex(ExecutionError, "test child failure"):
-            operator.open(self.ctx)
+            drain(operator)
 
         self.assertEqual(left.close_calls, 1)
         self.assertEqual(right.close_calls, 1)
+
+    def test_early_close_closes_active_inner_scan_and_outer(self) -> None:
+        schema = OutputSchema([ColumnBinding("t", "id", DataType.INTEGER)])
+        left = ListOperator(schema, [(1,), (2,)])
+        right = ListOperator(schema, [(10,), (20,)])
+        operator = BlockNestedLoopJoinOp(
+            left, right, OutputSchema(schema.columns + schema.columns),
+            JoinKind.CROSS, block_size=2,
+        )
+
+        operator.open(self.ctx)
+        self.assertEqual(operator.next().values, (1, 10))
+        operator.close()
+
+        self.assertEqual((left.close_calls, right.close_calls), (1, 1))
 
     def test_invalid_block_size_and_output_schema_are_rejected(self) -> None:
         schema = OutputSchema([ColumnBinding("t", "id", DataType.INTEGER)])

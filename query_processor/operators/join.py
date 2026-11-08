@@ -87,10 +87,10 @@ class BlockNestedLoopJoinOp(RowOperator):
         self._left_open = False
         self._right_open = False
         self._opened = False
-        self._inner_rows: list[ExecRow] = []
+        self._ctx: ExecContext | None = None
         self._left_block: list[ExecRow] = []
         self._left_block_pos = 0
-        self._inner_pos = 0
+        self._right_row: ExecRow | None = None
         self._left_exhausted = False
 
     @property
@@ -99,26 +99,19 @@ class BlockNestedLoopJoinOp(RowOperator):
         return self._schema
 
     def open(self, ctx: ExecContext) -> None:
-        """Buka child dan materialisasikan input dalam satu kali."""
+        """Open the outer input; inner input is rescanned once per outer block."""
         if self._left_open or self._right_open or self._opened:
             self.close()
 
-        self._inner_rows = []
         self._left_block = []
         self._left_block_pos = 0
-        self._inner_pos = 0
+        self._right_row = None
         self._left_exhausted = False
+        self._ctx = ctx
 
         try:
             self._left_open = True
             self._left.open(ctx)
-            self._right_open = True
-            self._right.open(ctx)
-            while (row := self._right.next()) is not None:
-                self._validate_row(row, self._right)
-                self._inner_rows.append(row)
-            self._right.close()
-            self._right_open = False
             self._opened = True
         except BaseException:
             try:
@@ -128,38 +121,59 @@ class BlockNestedLoopJoinOp(RowOperator):
             raise
 
     def next(self) -> ExecRow | None:
-        """Return the next matching row in left-major, then right order."""
-        if not self._opened or not self._inner_rows:
+        """Return matching rows while rescanning right once for each left block."""
+        if not self._opened:
             return None
 
-        while True:
-            if self._left_block_pos >= len(self._left_block):
-                if not self._load_left_block():
-                    return None
+        try:
+            while True:
+                if not self._left_block:
+                    if not self._load_left_block():
+                        return None
+                    assert self._ctx is not None
+                    self._right_open = True
+                    self._right.open(self._ctx)
+                    self._right_row = None
 
-            if self._inner_pos >= len(self._inner_rows):
-                self._left_block_pos += 1
-                self._inner_pos = 0
-                continue
-
-            left_row = self._left_block[self._left_block_pos]
-            right_row = self._inner_rows[self._inner_pos]
-            self._inner_pos += 1
-
-            if self._join_kind is JoinKind.NATURAL:
-                if not self._natural_match(left_row, right_row):
-                    continue
-                values = left_row.values + tuple(
-                    right_row.values[pos] for pos in self._right_output_positions
-                )
-            else:
-                values = left_row.values + right_row.values
-                if self._condition is not None:
-                    candidate = ExecRow(values, self._combined_schema)
-                    if not self._evaluator.eval_bool(self._condition, candidate):
+                if self._right_row is None:
+                    right_row = self._right.next()
+                    if right_row is None:
+                        self._right.close()
+                        self._right_open = False
+                        self._left_block = []
+                        self._left_block_pos = 0
                         continue
+                    self._validate_row(right_row, self._right)
+                    self._right_row = right_row
+                    self._left_block_pos = 0
 
-            return ExecRow(values, self._schema, rid=None)
+                left_row = self._left_block[self._left_block_pos]
+                right_row = self._right_row
+                self._left_block_pos += 1
+                if self._left_block_pos >= len(self._left_block):
+                    self._left_block_pos = 0
+                    self._right_row = None
+
+                if self._join_kind is JoinKind.NATURAL:
+                    if not self._natural_match(left_row, right_row):
+                        continue
+                    values = left_row.values + tuple(
+                        right_row.values[pos] for pos in self._right_output_positions
+                    )
+                else:
+                    values = left_row.values + right_row.values
+                    if self._condition is not None:
+                        candidate = ExecRow(values, self._combined_schema)
+                        if not self._evaluator.eval_bool(self._condition, candidate):
+                            continue
+
+                return ExecRow(values, self._schema, rid=None)
+        except BaseException:
+            try:
+                self.close()
+            except BaseException:
+                pass
+            raise
 
     def close(self) -> None:
         """Close all opened children and release materialized row buffers."""
@@ -167,10 +181,10 @@ class BlockNestedLoopJoinOp(RowOperator):
         self._right_open = False
         self._left_open = False
         self._opened = False
-        self._inner_rows = []
+        self._ctx = None
         self._left_block = []
         self._left_block_pos = 0
-        self._inner_pos = 0
+        self._right_row = None
         self._left_exhausted = True
 
         first_error: BaseException | None = None
@@ -192,7 +206,7 @@ class BlockNestedLoopJoinOp(RowOperator):
         """Read the next bounded block from the outer input."""
         self._left_block = []
         self._left_block_pos = 0
-        self._inner_pos = 0
+        self._right_row = None
         while len(self._left_block) < self._block_size and not self._left_exhausted:
             row = self._left.next()
             if row is None:
