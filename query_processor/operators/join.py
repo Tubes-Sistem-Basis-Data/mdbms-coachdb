@@ -40,8 +40,6 @@ class BlockNestedLoopJoinOp(RowOperator):
         self._shared_columns = shared_columns
         if block_size is not None and (type(block_size) is not int or block_size <= 0):
             raise PlanError("Ukuran blok JOIN harus berupa bilangan bulat positif")
-        # Keep the iterator bounded even before a shared JOIN_BLOCK_ROWS
-        # setting is introduced in common.config.
         self._block_size = block_size if block_size is not None else 1
 
         if not isinstance(join_kind, JoinKind):
@@ -112,8 +110,6 @@ class BlockNestedLoopJoinOp(RowOperator):
         self._left_exhausted = False
 
         try:
-            # Mark each child before calling open so a partially opened child
-            # is also given a chance to clean up if open raises.
             self._left_open = True
             self._left.open(ctx)
             self._right_open = True
@@ -128,7 +124,6 @@ class BlockNestedLoopJoinOp(RowOperator):
             try:
                 self.close()
             except BaseException:
-                # Preserve the error that caused open/materialization to fail.
                 pass
             raise
 
@@ -164,7 +159,6 @@ class BlockNestedLoopJoinOp(RowOperator):
                     if not self._evaluator.eval_bool(self._condition, candidate):
                         continue
 
-            # A joined row does not identify one writable source record.
             return ExecRow(values, self._schema, rid=None)
 
     def close(self) -> None:
