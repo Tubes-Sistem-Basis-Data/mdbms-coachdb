@@ -70,7 +70,6 @@ class SortOp(RowOperator):
             try:
                 self.close()
             except BaseException:
-                # Preserve the original open, read, or sort error.
                 pass
             raise
 
@@ -94,7 +93,6 @@ class SortOp(RowOperator):
 
     def _sort_key(self, row: ExecRow) -> tuple[bool, object]:
         value = row.values[self._position]
-        # None is the greatest ORDER BY value: last in ASC and first in DESC.
         return value is None, 0 if value is None else value
 
     def _validate_row(self, row: ExecRow) -> None:
