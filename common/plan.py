@@ -59,7 +59,10 @@ class TableScan(PlanNode):
 
 @dataclass(kw_only=True)
 class IndexScan(PlanNode):
-    """Baca lewat index. Kesamaan pakai `key`, rentang pakai `low`/`high`."""
+    """Baca lewat index. Kesamaan pakai `key`, rentang pakai `low`/`high`.
+
+    `alias` disalin dari TableScan yang diganti, supaya prefix kolom tetap sama.
+    """
 
     table: str
     index: IndexInfo
@@ -67,6 +70,7 @@ class IndexScan(PlanNode):
     key: object = None
     low: object = None
     high: object = None
+    alias: str | None = None
 
 
 @dataclass(kw_only=True)
@@ -159,9 +163,14 @@ class CreateTable(PlanNode):
 
 @dataclass(kw_only=True)
 class DropTable(PlanNode):
-    """Hapus tabel beserta index-nya (`DROP TABLE`)."""
+    """Hapus tabel beserta index-nya (`DROP TABLE`).
+
+    `cascade` True untuk `CASCADE`: tabel yang merujuk lewat foreign key ikut dihapus.
+    False untuk `RESTRICT` (default): ditolak jika masih ada tabel yang merujuk.
+    """
 
     table: str
+    cascade: bool = False
 
 
 @dataclass
