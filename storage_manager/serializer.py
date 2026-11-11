@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 import struct
 from common.catalog import ColumnSchema, DataType, TableSchema
-from storage_manager.errors import SchemaViolationError
+from storage_manager.errors import SchemaViolationError, StorageError
 from storage_manager.types import Value
 
 INTEGER_MIN = -(2 ** 63)
@@ -28,6 +28,8 @@ class RecordCodec:  # Encode/decode nilai dan record
     @staticmethod
     def decode_integer(data: bytes) -> int:
         # 8 bytes big-endian signed -> INTEGER.
+        if len(data) != 8:
+            raise StorageError(f"INTEGER butuh 8 byte, dapat {len(data)}")
         return struct.unpack(">q", data)[0]
 
     @staticmethod
@@ -43,6 +45,8 @@ class RecordCodec:  # Encode/decode nilai dan record
     @staticmethod
     def decode_float(data: bytes) -> float:
         # 8 bytes big-endian double -> FLOAT.
+        if len(data) != 8:
+            raise StorageError(f"FLOAT butuh 8 byte, dapat {len(data)}")
         return struct.unpack(">d", data)[0]
 
     @staticmethod
@@ -58,7 +62,7 @@ class RecordCodec:  # Encode/decode nilai dan record
     @staticmethod
     def decode_char(data: bytes) -> str:
         # bytes -> CHAR (spasi kanan dibuang).
-        return data.decode("utf-8").rstrip(" ")
+        return RecordCodec._decode_utf8(data, "CHAR").rstrip(" ")
 
     @staticmethod
     def encode_varchar(value: str, length: int) -> bytes:
@@ -74,9 +78,19 @@ class RecordCodec:  # Encode/decode nilai dan record
     def decode_varchar(data: bytes) -> str:
         # bytes -> VARCHAR (prefix panjang 2 byte + UTF-8).
         if len(data) < 2:
-            return ""
+            raise StorageError(f"VARCHAR butuh minimal 2 byte prefix, dapat {len(data)}")
         length = struct.unpack(">H", data[:2])[0]
-        return data[2:2 + length].decode("utf-8")
+        if length > len(data) - 2:
+            raise StorageError(f"VARCHAR terpotong: prefix {length} > sisa {len(data) - 2} byte")
+        return RecordCodec._decode_utf8(data[2:2 + length], "VARCHAR")
+
+    @staticmethod
+    def _decode_utf8(data: bytes, context: str) -> str:
+        # Decode UTF-8, bungkus UnicodeDecodeError menjadi StorageError.
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise StorageError(f"Data {context} bukan UTF-8 valid") from exc
 
     # Helpers untuk type codecs
 
@@ -154,10 +168,12 @@ class RecordCodec:  # Encode/decode nilai dan record
                 f"Jumlah nilai ({len(values)}) != jumlah kolom ({len(schema.columns)})"
             )
 
+        result: list[Value] = []
         for col, val in zip(schema.columns, values):
             if val is None:
                 if not col.nullable:
                     raise SchemaViolationError(f"Kolom {col.name} NOT NULL tapi nilai None")
+                result.append(None)
                 continue
 
             match col.type:
@@ -168,6 +184,7 @@ class RecordCodec:  # Encode/decode nilai dan record
                         )
                     if not (INTEGER_MIN <= val <= INTEGER_MAX):
                         raise SchemaViolationError(f"Kolom {col.name} INTEGER di luar rentang 64-bit")
+                    result.append(val)
                 case DataType.FLOAT:
                     if isinstance(val, bool) or not isinstance(val, (int, float)):
                         raise SchemaViolationError(
@@ -176,6 +193,7 @@ class RecordCodec:  # Encode/decode nilai dan record
                     f = float(val)
                     if math.isnan(f) or math.isinf(f):
                         raise SchemaViolationError(f"Kolom {col.name} FLOAT tidak boleh NaN/infinity")
+                    result.append(f)
                 case DataType.CHAR | DataType.VARCHAR:
                     if not isinstance(val, str):
                         raise SchemaViolationError(
@@ -185,8 +203,9 @@ class RecordCodec:  # Encode/decode nilai dan record
                         raise SchemaViolationError(
                             f"Nilai kolom {col.name} melebihi length {col.length}"
                         )
+                    result.append(val)
 
-        return values
+        return tuple(result)
 
     @staticmethod
     def encode(schema: TableSchema, values: tuple[Value, ...]) -> bytes:
@@ -219,7 +238,7 @@ class RecordCodec:  # Encode/decode nilai dan record
         null_bitmap_bytes = (num_cols + 7) // 8
 
         if len(data) < null_bitmap_bytes:
-            raise ValueError(
+            raise StorageError(
                 f"Data terlalu pendek: butuh minimal {null_bitmap_bytes} byte untuk null bitmap"
             )
 
@@ -234,7 +253,7 @@ class RecordCodec:  # Encode/decode nilai dan record
                 continue
             col_size = RecordCodec._fixed_size(col)
             if offset + col_size > len(data):
-                raise ValueError(f"Data terlalu pendek untuk kolom {col.name}")
+                raise StorageError(f"Data terlalu pendek untuk kolom {col.name}")
             values[i] = RecordCodec._decode_value(col, data[offset:offset + col_size])
             offset += col_size
 
@@ -245,12 +264,12 @@ class RecordCodec:  # Encode/decode nilai dan record
                 continue
             # Panjang variabel: 2 byte prefix + isi UTF-8
             if offset + 2 > len(data):
-                raise ValueError(f"Data terlalu pendek untuk prefix VARCHAR {col.name}")
+                raise StorageError(f"Data terlalu pendek untuk prefix VARCHAR {col.name}")
             actual_len = struct.unpack(">H", data[offset:offset + 2])[0]
             payload = data[offset + 2:offset + 2 + actual_len]
             if len(payload) < actual_len:
-                raise ValueError(f"Data VARCHAR {col.name} terpotong")
-            values[i] = payload.decode("utf-8")
+                raise StorageError(f"Data VARCHAR {col.name} terpotong")
+            values[i] = RecordCodec._decode_utf8(payload, f"VARCHAR {col.name}")
             offset += 2 + actual_len
 
         return tuple(values)
