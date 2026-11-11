@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from common.errors import IndexDefinitionError, SchemaViolationError, TableNotFoundError
+from common.errors import IndexDefinitionError, SchemaViolationError, StorageError, TableNotFoundError
 
-__all__ = ["IndexDefinitionError", "SchemaViolationError", "TableNotFoundError"]
+__all__ = ["IndexDefinitionError", "SchemaViolationError", "StorageError", "TableNotFoundError"]
