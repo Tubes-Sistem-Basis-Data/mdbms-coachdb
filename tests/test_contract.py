@@ -12,6 +12,7 @@ from common import (
     NO_RECORD,
     ColumnRef,
     ColumnSchema,
+    CompOp,
     CreateTable,
     DataType,
     DropTable,
@@ -34,6 +35,7 @@ from common import (
     CheckpointResult,
     ExecutionResult,
     IndexInfo,
+    IndexScan,
     LogKind,
     LogRecord,
     LogResult,
@@ -231,6 +233,9 @@ class TestSharedTypes(unittest.TestCase):
         self.assertIs(Subquery(plan=scan).plan, scan)
         self.assertEqual(Limit(count=5).count, 5)
         self.assertEqual(DropTable(table="t").table, "t")
+        self.assertFalse(DropTable(table="t").cascade)
+        index = IndexInfo("idx", "t", "a")
+        self.assertIsNone(IndexScan(table="t", index=index, op=CompOp.EQ, key=1).alias)
         schema = TableSchema("t", [ColumnSchema("id", DataType.INTEGER)])
         self.assertIs(CreateTable(schema=schema).schema, schema)
         self.assertEqual(QueryKind.CREATE_TABLE.value, "CREATE_TABLE")

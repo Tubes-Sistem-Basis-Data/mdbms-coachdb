@@ -57,3 +57,14 @@ Usulan berstatus diterima dengan syarat (`snapshot_to`/`restore_from` dan `rebui
 | Docstring `Subquery`: hanya subquery tak-berkorelasi | Batas lingkup bonus subquery. | QO, QP | (menunggu) |
 | Docstring `LogRecord.prev_lsn`: catatan dengan `tx_id=None` selalu -1 | Catatan global tidak punya rantai transaksi. | FRM | (menunggu) |
 | Docstring `FRM.recover`/`recover_to`: gagal dikembalikan sebagai `ok=False`; `recover_to` menulis `RESTORE` global lalu flush dan checkpoint | `main.py` mengecek `result.ok`. Checkpoint setelah restore mencegah redo catatan sebelum titik restore tanpa field baru di `LogRecord`. | FRM, main.py | (menunggu) |
+
+## 11 November 2026
+
+### Tambahan untuk QO-17, QO-13, QP-15, dan QP-16
+
+Hanya menambah field dengan nilai default, kode yang sudah ada tetap jalan.
+
+| Perubahan | Alasan | Terdampak | Disetujui |
+| --- | --- | --- | --- |
+| `DropTable.cascade: bool = False` | Opsi `CASCADE`/`RESTRICT` pada `DROP TABLE` sebelumnya dikenali parser tetapi tidak tersimpan di plan, sehingga RESTRICT tidak bisa ditegakkan. CASCADE dijalankan QP dengan memanggil `SM.drop_table` untuk setiap tabel yang merujuk, jadi interface SM tidak berubah. | QO, QP | (menunggu) |
+| `IndexScan.alias: str \| None = None` | Saat QO-13 mengganti `TableScan` beralias menjadi `IndexScan`, alias tidak hilang dan kolom tetap berprefix alias sesuai docstring `ColumnRef`. | QO, QP | (menunggu) |
