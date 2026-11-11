@@ -126,6 +126,20 @@ class TestRecordCodecSM03(unittest.TestCase):
         # 1 byte bitmap + 8 (id) + (2+1) + (2+5) = 19
         self.assertEqual(len(encoded), 19)
 
+    def test_encode_decode_varchar_not_last(self):
+        # VARCHAR di tengah schema (bukan kolom terakhir)
+        schema = TableSchema(
+            "t",
+            columns=[
+                ColumnSchema("id", DataType.INTEGER, nullable=False),
+                ColumnSchema("name", DataType.VARCHAR, length=20),
+                ColumnSchema("gpa", DataType.FLOAT),
+            ],
+        )
+        values: tuple[Value, ...] = (1, "Alice", 3.5)
+        encoded = RecordCodec.encode(schema, values)
+        self.assertEqual(RecordCodec.decode(schema, encoded), values)
+
     def test_validate_ok(self):
         values: tuple[Value, ...] = (1, "abc", 3.14, "tag")
         result = RecordCodec.validate(self.schema, values)

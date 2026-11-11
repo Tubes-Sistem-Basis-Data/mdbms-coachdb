@@ -225,29 +225,32 @@ class RecordCodec:  # Encode/decode nilai dan record
 
         bitmap = data[:null_bitmap_bytes]
         offset = null_bitmap_bytes
-        values = []
+        values: list = [None] * num_cols
 
+        # Pass 1: kolom fixed sesuai urutan schema (VARCHAR dan NULL dilewati).
         for i, col in enumerate(schema.columns):
             is_null = (bitmap[i // 8] >> (i % 8)) & 1
+            if col.type == DataType.VARCHAR or is_null:
+                continue
+            col_size = RecordCodec._fixed_size(col)
+            if offset + col_size > len(data):
+                raise ValueError(f"Data terlalu pendek untuk kolom {col.name}")
+            values[i] = RecordCodec._decode_value(col, data[offset:offset + col_size])
+            offset += col_size
 
-            if is_null:
-                values.append(None)
-            elif col.type == DataType.VARCHAR:
-                # Panjang variabel: 2 byte prefix + isi UTF-8
-                if offset + 2 > len(data):
-                    raise ValueError(f"Data terlalu pendek untuk prefix VARCHAR {col.name}")
-                actual_len = struct.unpack(">H", data[offset:offset + 2])[0]
-                payload = data[offset + 2:offset + 2 + actual_len]
-                if len(payload) < actual_len:
-                    raise ValueError(f"Data VARCHAR {col.name} terpotong")
-                values.append(payload.decode("utf-8"))
-                offset += 2 + actual_len
-            else:
-                col_size = RecordCodec._fixed_size(col)
-                if offset + col_size > len(data):
-                    raise ValueError(f"Data terlalu pendek untuk kolom {col.name}")
-                col_data = data[offset:offset + col_size]
-                offset += col_size
-                values.append(RecordCodec._decode_value(col, col_data))
+        # Pass 2: kolom VARCHAR sesuai urutan schema.
+        for i, col in enumerate(schema.columns):
+            is_null = (bitmap[i // 8] >> (i % 8)) & 1
+            if col.type != DataType.VARCHAR or is_null:
+                continue
+            # Panjang variabel: 2 byte prefix + isi UTF-8
+            if offset + 2 > len(data):
+                raise ValueError(f"Data terlalu pendek untuk prefix VARCHAR {col.name}")
+            actual_len = struct.unpack(">H", data[offset:offset + 2])[0]
+            payload = data[offset + 2:offset + 2 + actual_len]
+            if len(payload) < actual_len:
+                raise ValueError(f"Data VARCHAR {col.name} terpotong")
+            values[i] = payload.decode("utf-8")
+            offset += 2 + actual_len
 
         return tuple(values)
