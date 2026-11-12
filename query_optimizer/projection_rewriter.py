@@ -1,7 +1,7 @@
 from copy import deepcopy
 
 from common.expression import And, BinaryOp, ColumnRef, Comparison, Expression
-from common.plan import Filter, IndexScan, Join, JoinKind, PlanNode, Project, Sort, TableScan
+from common.plan import Filter, IndexScan, Join, JoinKind, PlanNode, Project, Sort, SubqueryScan, TableScan
 
 class ProjectionRewriter:
     def apply(self, plan: PlanNode) -> PlanNode:
@@ -152,7 +152,12 @@ class ProjectionRewriter:
                         tables.add(table_name)
 
                     elif isinstance(current_node, IndexScan):
-                        tables.add(current_node.table)
+                        tables.add(current_node.alias or current_node.table)
+
+                    # Isi subquery di FROM tidak terlihat dari luar, cukup aliasnya
+                    elif isinstance(current_node, SubqueryScan):
+                        tables.add(current_node.alias)
+                        continue
 
                     for nested_child in current_node.children:
                         pending_nodes.append(nested_child)

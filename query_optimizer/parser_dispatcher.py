@@ -18,7 +18,8 @@ class ParserDispatcher:
     def __init__(self) -> None:
         self._expr_parser = ExpressionParser()
         self._select_parser = SelectParser(self._expr_parser)
-        self._statement_parser = StatementParser()
+        self._statement_parser = StatementParser(self._expr_parser)
+        self._expr_parser.set_subquery_parser(self._select_parser.parse_select)
 
     def parse(self, tokens: "TokenStream", sql: str) -> ParsedQuery:
         """Parse aliran token menjadi ParsedQuery. Dipanggil facade QO di parse_query."""
@@ -40,7 +41,12 @@ class ParserDispatcher:
             case "DELETE":
                 parsed = self._statement_parser.parse_delete(tokens)
             case "CREATE":
-                parsed = self._statement_parser.parse_create_index(tokens)
+                if tokens.peek(1).type == T.KEYWORD and tokens.peek(1).value == "TABLE":
+                    parsed = self._statement_parser.parse_create_table(tokens)
+                else:
+                    parsed = self._statement_parser.parse_create_index(tokens)
+            case "DROP":
+                parsed = self._statement_parser.parse_drop_table(tokens)
             case "BEGIN" | "COMMIT" | "ABORT":
                 parsed = self._statement_parser.parse_transaction(tokens)
             case "EXPLAIN":

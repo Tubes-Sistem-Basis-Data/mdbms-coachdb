@@ -9,6 +9,7 @@ from __future__ import annotations
 from common.errors import SemanticError
 from common.plan import Join, JoinKind, PlanNode, Project
 from .cost_model import CostModel
+from .plan_utils import source_list
 
 
 def _is_join(node: PlanNode) -> bool:
@@ -114,13 +115,8 @@ class JoinOrderOptimizer:
 
 
 def _leaf_tables(node: PlanNode) -> list[str]:
-    from common.plan import TableScan, IndexScan
-    if isinstance(node, (TableScan, IndexScan)):
-        return [node.table]
-    result: list[str] = []
-    for child in node.children:
-        result.extend(_leaf_tables(child))
-    return result
+    # alias ikut dibandingkan supaya self-join tidak dianggap urutan yang sama
+    return source_list(node)
 
 
 def _has_different_column_order(original: Join, candidate: Join) -> bool:
