@@ -18,11 +18,11 @@ class TestFRMDriver(unittest.TestCase):
         results = FRMTestDriver().run_all()
 
         self.assertEqual(len(results), 11)
-        self.assertEqual(sum(r.passed for r in results), 8)
+        self.assertEqual(sum(r.passed for r in results), 10)
         self.assertEqual(sum(not r.passed and not r.skipped for r in results), 0)
         self.assertEqual(
             {r.name for r in results if r.skipped},
-            {"pitr", "crash-recovery", "multi-tx-recovery"},
+            {"pitr"},
         )
         for case in FRMTestDriver().cases[-3:]:
             self.assertTrue(case.actions)
