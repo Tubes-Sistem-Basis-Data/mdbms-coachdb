@@ -247,6 +247,37 @@ class TestCheckpointDanKosong(RecoveryTestCase):
         self.assertEqual(sm.calls.count("insert:student:0:1"), 0)
         self.assertEqual(sm.calls.count("insert:student:0:2"), 1)
 
+    def test_recovery_multi_transaksi_setelah_checkpoint(self) -> None:
+        first_rid = RID("student", 0, 1)
+        second_rid = RID("student", 0, 2)
+        third_rid = RID("student", 0, 3)
+
+        self._write(LogKind.BEGIN, 1)
+        self._write(LogKind.DATA, 1, self._change(first_rid, ChangeOp.INSERT, NO_RECORD, [1]))
+        last_lsn = self._write(LogKind.COMMIT, 1)
+        self.assertTrue(self.frm.flush_log(last_lsn))
+        self.frm.set_dependencies(FakeStorageManager({first_rid: [1]}), FakeConcurrencyControl())
+        self.assertTrue(self.frm.checkpoint().ok)
+
+        self._write(LogKind.BEGIN, 2)
+        self._write(LogKind.DATA, 2, self._change(second_rid, ChangeOp.INSERT, NO_RECORD, [2]))
+        self._write(LogKind.BEGIN, 3)
+        self._write(LogKind.DATA, 3, self._change(third_rid, ChangeOp.INSERT, NO_RECORD, [3]))
+        last_lsn = self._write(LogKind.COMMIT, 3)
+        self.assertTrue(self.frm.flush_log(last_lsn))
+
+        frm, sm, _ = self._prepare_recovery({first_rid: [1]})
+
+        result = frm.recover()
+
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(sm.rows.get(first_rid), [1])
+        self.assertNotIn(second_rid, sm.rows)
+        self.assertEqual(sm.rows.get(third_rid), [3])
+        self.assertEqual(sm.calls.count("insert:student:0:1"), 0)
+        self.assertEqual(sm.calls.count("insert:student:0:3"), 1)
+        self.assertGreaterEqual(result.last_tx_id, 3)
+
     def test_recovery_membangun_ulang_index_sebelum_checkpoint(self) -> None:
         rid = RID("student", 0, 1)
         self._write(LogKind.BEGIN, 1)
