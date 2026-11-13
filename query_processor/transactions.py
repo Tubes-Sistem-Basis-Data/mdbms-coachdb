@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from threading import Lock
 from typing import Callable
 
 from common.errors import MdbmsError, TransactionAbortedError
@@ -18,8 +19,27 @@ class TransactionCoordinator:
 
     def __init__(self, ccm: ConcurrencyControlManager) -> None:
         self._ccm = ccm
+        self._uncertain_tx_ids: set[int] = set()
+        self._state_lock = Lock()
+
+    def blocked_result(self, session: Session) -> ExecutionResult | None:
+        with self._state_lock:
+            uncertain = session.tx_id in self._uncertain_tx_ids
+        if uncertain:
+            return ExecutionResult(
+                ok=False,
+                message=(
+                    f"ERROR [TX]: Status commit transaksi {session.tx_id} belum pasti. "
+                    "Sesi tidak dapat menjalankan perintah lanjutan; "
+                    "status transaksi harus diselesaikan melalui recovery sistem."
+                ),
+            )
+        return None
 
     def begin(self, session: Session) -> ExecutionResult:
+        blocked = self.blocked_result(session)
+        if blocked is not None:
+            return blocked
         if session.tx_id is not None or session.in_explicit_tx:
             return ExecutionResult(ok=False, message="ERROR [TX]: Transaksi sudah aktif")
 
@@ -40,6 +60,9 @@ class TransactionCoordinator:
         return self._finish(session, False)
 
     def run_autocommit(self, session: Session, work: Callable[[int], ExecutionResult]) -> ExecutionResult:
+        blocked = self.blocked_result(session)
+        if blocked is not None:
+            return blocked
         if session.tx_id is not None or session.in_explicit_tx:
             return ExecutionResult(
                 ok=False,
@@ -98,6 +121,9 @@ class TransactionCoordinator:
                 raise MdbmsError(result.message) from error
 
     def _finish(self, session: Session, commit: bool) -> ExecutionResult:
+        blocked = self.blocked_result(session)
+        if blocked is not None:
+            return blocked
         command = "COMMIT" if commit else "ABORT"
         tx_id = session.tx_id
         if tx_id is None:
@@ -109,6 +135,9 @@ class TransactionCoordinator:
         # Minta CCM menyelesaikan transaksi
         try:
             if commit:
+                # Blokir jika CCM gagal memberi hasil akhir yang pasti.
+                with self._state_lock:
+                    self._uncertain_tx_ids.add(tx_id)
                 result = self._ccm.commit(tx_id)
             else:
                 result = self._ccm.abort(tx_id)
@@ -140,8 +169,9 @@ class TransactionCoordinator:
 
         return ExecutionResult(ok=ok, message=message)
 
-    @staticmethod
-    def _clear(session: Session) -> None:
+    def _clear(self, session: Session) -> None:
+        with self._state_lock:
+            self._uncertain_tx_ids.discard(session.tx_id)
         session.tx_id = None
         session.in_explicit_tx = False
 
