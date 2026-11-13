@@ -8,6 +8,7 @@ class Transaction:
     tx_id: int
     timestamp: int
     status: TxStatus = TxStatus.ACTIVE
+    abort_requested: bool = False
 
 
 class ConcurrencyProtocol(ABC):

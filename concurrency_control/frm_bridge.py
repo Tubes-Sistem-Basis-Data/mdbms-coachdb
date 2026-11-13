@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from common.errors import LogWriteError
+from common.errors import LogError, LogWriteError
 from common.interfaces import FailureRecoveryManager
 from common.log import LogKind, LogRecord
 from common.storage import RID
@@ -56,7 +56,17 @@ class AbortCoordinator:
         self._bridge = bridge
 
     def abort(self, tx_id: int) -> TxResult:
-        return TxResult(tx_id=tx_id, status=TxStatus.ABORTED, ok=False)
-
-    def mark_victim(self, tx_id: int) -> None:
-        return None
+        """Catat ABORT_REQUEST lalu minta FRM undo. FRM menulis ABORT dan flush saat rollback selesai."""
+        try:
+            self._bridge.log_abort_request(tx_id)
+        except LogError as exc:
+            return TxResult(tx_id=tx_id, status=TxStatus.FAILED, ok=False, message=str(exc))
+        result = self._bridge.rollback(tx_id)
+        if not result.ok:
+            return TxResult(
+                tx_id=tx_id,
+                status=TxStatus.FAILED,
+                ok=False,
+                message=result.message or f"rollback T{tx_id} gagal",
+            )
+        return TxResult(tx_id=tx_id, status=TxStatus.ABORTED, ok=True, message=result.message)

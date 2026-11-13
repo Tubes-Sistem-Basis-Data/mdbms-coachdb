@@ -32,6 +32,8 @@ class CCManager(ConcurrencyControlManager):
         self._last_tx_id = 0
         self._next_ts = 0
         self._transactions: dict[int, Transaction] = {}
+        self._aborting: set[int] = set()
+        self._aborted: set[int] = set()
         self._paused = False
         self._protocol_type = protocol
         self._protocol: ConcurrencyProtocol = self._make_protocol(protocol)
@@ -60,11 +62,14 @@ class CCManager(ConcurrencyControlManager):
         with self._mutex:
             tx = self._require_active(tx_id)
             if tx is None:
-                return AccessResponse(status=AccessStatus.ABORTED, message=f"T{tx_id} tidak aktif")
+                return AccessResponse(status=AccessStatus.ABORTED, message=self._inactive_message(tx_id))
             response = self._protocol.request(tx, resource, action)
-            if response.status is not AccessStatus.ALLOWED:
-                return response
-            self.schedule.record(tx_id, resource, action)
+            if response.status is AccessStatus.ALLOWED:
+                self.schedule.record(tx_id, resource, action)
+        if response.status is AccessStatus.ABORTED:
+            return self._abort_denied(tx_id, response)
+        if response.status is not AccessStatus.ALLOWED:
+            return response
         if action is Action.READ:
             return response
         try:
@@ -81,7 +86,12 @@ class CCManager(ConcurrencyControlManager):
         with self._mutex:
             tx = self._require_active(tx_id)
             if tx is None:
-                return TxResult(tx_id=tx_id, status=TxStatus.FAILED, ok=False, message=f"T{tx_id} tidak aktif")
+                return TxResult(
+                    tx_id=tx_id,
+                    status=TxStatus.ABORTED if tx_id in self._aborted else TxStatus.FAILED,
+                    ok=False,
+                    message=self._inactive_message(tx_id),
+                )
             tx.status = TxStatus.PARTIALLY_COMMITTED
         try:
             self._bridge.log_commit(tx_id)
@@ -99,9 +109,48 @@ class CCManager(ConcurrencyControlManager):
         return TxResult(tx_id=tx_id, status=TxStatus.COMMITTED, ok=True)
 
     def abort(self, tx_id: int) -> TxResult:
-        # bridge.abort (ABORT_REQUEST, rollback, ABORT + flush), baru lepas lock
-        # lock cuma dilepas kalau rollback berhasil
-        return TxResult(tx_id=tx_id, status=TxStatus.ABORTED, ok=False)
+        with self._mutex:
+            tx = self._transactions.get(tx_id)
+            if tx is None:
+                if tx_id in self._aborted:
+                    return TxResult(tx_id=tx_id, status=TxStatus.ABORTED, ok=True, message=f"T{tx_id} sudah dibatalkan")
+                return TxResult(tx_id=tx_id, status=TxStatus.FAILED, ok=False, message=f"T{tx_id} tidak aktif")
+            if tx_id in self._aborting:
+                return TxResult(tx_id=tx_id, status=TxStatus.FAILED, ok=False, message=f"T{tx_id} sedang dibatalkan")
+            retry = tx.status is TxStatus.FAILED and tx.abort_requested
+            if tx.status is not TxStatus.ACTIVE and not retry:
+                return TxResult(
+                    tx_id=tx_id,
+                    status=tx.status,
+                    ok=False,
+                    message=f"T{tx_id} berstatus {tx.status.value} dan tidak bisa dibatalkan",
+                )
+            tx.status = TxStatus.FAILED
+            tx.abort_requested = True
+            self._aborting.add(tx_id)
+        try:
+            result = self._aborts.abort(tx_id)
+        finally:
+            with self._mutex:
+                self._aborting.discard(tx_id)
+        if result.ok:
+            with self._mutex:
+                self._aborted.add(tx_id)
+                self._finish(tx_id, TxStatus.ABORTED)
+        return result
+
+    def _abort_denied(self, tx_id: int, response: AccessResponse) -> AccessResponse:
+        result = self.abort(tx_id)
+        reason = response.message or f"T{tx_id} dibatalkan"
+        if not result.ok:
+            reason = f"{reason}; rollback belum selesai: {result.message}"
+        return AccessResponse(status=AccessStatus.ABORTED, message=reason)
+
+    def _inactive_message(self, tx_id: int) -> str:
+        tx = self._transactions.get(tx_id)
+        if tx_id in self._aborted or (tx is not None and tx.abort_requested):
+            return f"T{tx_id} telah dibatalkan"
+        return f"T{tx_id} tidak aktif"
 
     def _require_active(self, tx_id: int) -> Transaction | None:
         tx = self._transactions.get(tx_id)
