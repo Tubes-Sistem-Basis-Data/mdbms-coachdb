@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from common.errors import StorageError
 from common.log import LogKind, LogRecord
 from common.storage import RID
 from common.transaction import NO_RECORD, ChangeOp, DataChange
@@ -36,6 +37,12 @@ class FakeStorageManager:
 
     def rebuild_indexes(self) -> None:
         self.calls.append("rebuild_indexes")
+
+
+class _GagalRebuildStorageManager(FakeStorageManager):
+    def rebuild_indexes(self) -> None:
+        self.calls.append("rebuild_indexes")
+        raise StorageError("gagal rebuild index")
 
 
 class FakeConcurrencyControl:
@@ -293,6 +300,26 @@ class TestCheckpointDanKosong(RecoveryTestCase):
         self.assertEqual(sm.calls.count("rebuild_indexes"), 1)
         last_flush = len(sm.calls) - 1 - sm.calls[::-1].index("flush")
         self.assertLess(sm.calls.index("rebuild_indexes"), last_flush)
+
+    def test_rebuild_index_gagal_menggagalkan_recovery(self) -> None:
+        rid = RID("student", 0, 1)
+        self._write(LogKind.BEGIN, 1)
+        self._write(LogKind.DATA, 1, self._change(rid, ChangeOp.INSERT, NO_RECORD, [1]))
+        last_lsn = self._write(LogKind.COMMIT, 1)
+        self.assertTrue(self.frm.flush_log(last_lsn))
+
+        frm = self._reopen()
+        sm = _GagalRebuildStorageManager({rid: [1]})
+        frm.set_dependencies(sm, FakeConcurrencyControl())
+
+        result = frm.recover()
+
+        self.assertFalse(result.ok)
+        self.assertIn("gagal rebuild index", result.message)
+        self.assertFalse(frm._recovery_service.is_ready())
+        self.assertNotIn(LogKind.CHECKPOINT_END, [
+            record.kind for record in frm.read_log()
+        ])
 
     def test_wal_kosong_recovery_sukses(self) -> None:
         frm, sm, _ = self._prepare_recovery()
