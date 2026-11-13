@@ -9,6 +9,8 @@ from common.transaction import (
     DataChange,
     ResourceId,
 )
+from common.transaction import TxResult, TxStatus
+from concurrency_control.frm_bridge import AbortCoordinator
 from concurrency_control.lock_manager import LockMode
 from concurrency_control.manager import CCManager
 
@@ -45,12 +47,19 @@ class _Bridge:
     def log_commit(self, tx_id: int) -> int:
         return 0
 
+    def log_abort_request(self, tx_id: int) -> int:
+        return 0
+
+    def rollback(self, tx_id: int) -> TxResult:
+        return TxResult(tx_id=tx_id, status=TxStatus.ABORTED, ok=True)
+
 
 class ValidateObjectTest(unittest.TestCase):
     def setUp(self) -> None:
         self.ccm = CCManager(frm=None)
         self.bridge = _Bridge(self.ccm)
         self.ccm._bridge = self.bridge
+        self.ccm._aborts = AbortCoordinator(self.bridge)
 
     def validate(self, tx_id: int, resource: ResourceId, action: Action, change: DataChange | None = None):
         return self.ccm.validate_object(tx_id, resource, action, change)
