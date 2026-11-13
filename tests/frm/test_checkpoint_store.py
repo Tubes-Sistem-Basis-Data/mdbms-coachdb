@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from common.errors import LogError
+from common.log import RecoveryTarget
 from failure_recovery.checkpoint.checkpoint_store import CheckpointStore, _to_dict
 from failure_recovery.checkpoint.meta import CheckpointMeta
 
@@ -122,6 +123,61 @@ class CheckpointStoreTest(unittest.TestCase):
         store = CheckpointStore(str(path), self.store.snapshot_dir)
         store.write_master_atomic(self.meta)
         self.assertEqual(store.find_latest_completed(), self.meta)
+
+    def test_find_snapshot_before_memilih_kandidat_terbaru(self):
+        old = CheckpointMeta(
+            checkpoint_lsn=10,
+            snapshot_path=str(self.root / "snapshots" / "checkpoint-10.snap"),
+            timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            max_tx_id=5,
+            completed=True,
+        )
+        new = CheckpointMeta(
+            checkpoint_lsn=20,
+            snapshot_path=str(self.root / "snapshots" / "checkpoint-20.snap"),
+            timestamp=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            max_tx_id=8,
+            completed=True,
+        )
+        self.store.write_snapshot_metadata(old)
+        self.store.write_snapshot_metadata(new)
+        self.store.write_master_atomic(new)
+
+        self.assertEqual(
+            self.store.find_snapshot_before(RecoveryTarget(tx_id=7)),
+            old,
+        )
+        self.assertEqual(
+            self.store.find_snapshot_before(RecoveryTarget(tx_id=8)),
+            new,
+        )
+        middle = datetime(2026, 1, 1, 12, tzinfo=timezone.utc).timestamp()
+        self.assertEqual(
+            self.store.find_snapshot_before(RecoveryTarget(timestamp=middle)),
+            old,
+        )
+        before = datetime(2025, 12, 31, tzinfo=timezone.utc).timestamp()
+        self.assertIsNone(
+            self.store.find_snapshot_before(RecoveryTarget(timestamp=before))
+        )
+
+    def test_find_snapshot_before_mengabaikan_checkpoint_belum_selesai(self):
+        self.meta.completed = False
+        self.store.write_snapshot_metadata(self.meta)
+        self.store.write_master_atomic(self.meta)
+
+        self.assertIsNone(
+            self.store.find_snapshot_before(RecoveryTarget(tx_id=99))
+        )
+
+    def test_snapshot_path_berada_di_direktori_snapshot(self):
+        self.assertEqual(
+            self.store.snapshot_path(12),
+            str(Path(self.store.snapshot_dir) / "checkpoint-12.snap"),
+        )
+        for invalid in (0, -1, True, "12"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.store.snapshot_path(invalid)
 
 
 if __name__ == "__main__":
