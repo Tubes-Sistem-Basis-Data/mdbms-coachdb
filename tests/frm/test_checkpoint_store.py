@@ -161,6 +161,26 @@ class CheckpointStoreTest(unittest.TestCase):
             self.store.find_snapshot_before(RecoveryTarget(timestamp=before))
         )
 
+    def test_find_snapshot_before_memakai_active_tx(self):
+        metadata = CheckpointMeta(
+            checkpoint_lsn=30,
+            snapshot_path=str(self.root / "snapshots" / "checkpoint-30.snap"),
+            timestamp=datetime(2026, 1, 3, tzinfo=timezone.utc),
+            active_tx=[7],
+            max_tx_id=10,
+            completed=True,
+        )
+        self.store.write_snapshot_metadata(metadata)
+        self.store.write_master_atomic(metadata)
+
+        self.assertEqual(
+            self.store.find_snapshot_before(RecoveryTarget(tx_id=7)),
+            metadata,
+        )
+        self.assertIsNone(
+            self.store.find_snapshot_before(RecoveryTarget(tx_id=6))
+        )
+
     def test_find_snapshot_before_mengabaikan_checkpoint_belum_selesai(self):
         self.meta.completed = False
         self.store.write_snapshot_metadata(self.meta)
