@@ -72,6 +72,7 @@ def serialize(record: LogRecord) -> bytes | None:
             "tx_id": record.tx_id,
             "active_tx": list(record.active_tx),
             "change": _encode_change(change) if change is not None else None,
+            "prev_lsn": record.prev_lsn,
         }
         text = json.dumps(payload, separators=(",", ":"))
     except (AttributeError, TypeError, ValueError):
@@ -103,6 +104,7 @@ def parse(data: bytes | str) -> LogRecord | None:
             tx_id=payload["tx_id"],
             active_tx=list(payload["active_tx"]),
             change=_decode_change(change) if change is not None else None,
+            prev_lsn=int(payload.get("prev_lsn", -1)),
         )
     except (KeyError, TypeError, ValueError):
         return None
