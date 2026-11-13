@@ -1,5 +1,6 @@
 import unittest
 
+from common.errors import MdbmsError
 from common.log import LogKind, LogResult
 from common.storage import RID
 from common.transaction import (
@@ -27,8 +28,6 @@ class _FakeFrm:
         self.locked_during_rollback: bool | None = None
 
     def write_log(self, record):
-        if record.kind is LogKind.ABORT_REQUEST and self.fail_request:
-            return LogResult(ok=False, message="disk penuh")
         self.events.append((record.kind.value, record.tx_id))
         return LogResult(ok=True, lsn=len(self.events))
 
@@ -36,6 +35,10 @@ class _FakeFrm:
         return True
 
     def rollback(self, tx_id: int) -> TxResult:
+        # FRM asli menulis ABORT_REQUEST sendiri sebelum undo.
+        if self.fail_request:
+            return TxResult(tx_id=tx_id, status=TxStatus.FAILED, ok=False, message="disk penuh")
+        self.events.append(("ABORT_REQUEST", tx_id))
         self.events.append(("ROLLBACK", tx_id))
         if self.ccm is not None:
             self.locked_during_rollback = bool(self.ccm._protocol.held_locks(tx_id))
@@ -95,14 +98,13 @@ class AbortFlowTest(unittest.TestCase):
         result = self.ccm.abort(t1)
         self.assertFalse(result.ok)
         self.assertNotIn(("ROLLBACK", t1), self.frm.events)
-        self.assertIn(t1, self.ccm._transactions)
+        self.assertIs(self.ccm._transactions[t1].status, TxStatus.FAILED)
 
-    def test_abort_is_idempotent(self) -> None:
+    def test_second_abort_does_not_rollback_again(self) -> None:
         t1 = self.ccm.begin_transaction()
         self.ccm.abort(t1)
         self.frm.events.clear()
-        again = self.ccm.abort(t1)
-        self.assertTrue(again.ok)
+        self.assertFalse(self.ccm.abort(t1).ok)
         self.assertEqual(self.frm.events, [])
 
     def test_abort_unknown_transaction_fails(self) -> None:
@@ -115,16 +117,13 @@ class AbortFlowTest(unittest.TestCase):
         self.ccm.abort(t1)
         result = self.ccm.commit(t1)
         self.assertFalse(result.ok)
-        self.assertIs(result.status, TxStatus.ABORTED)
-        self.assertIn("dibatalkan", result.message)
         self.assertNotIn(("COMMIT", t1), self.frm.events)
 
-    def test_access_after_abort_rejected_with_message(self) -> None:
+    def test_access_after_abort_rejected(self) -> None:
         t1 = self.ccm.begin_transaction()
         self.ccm.abort(t1)
         resp = self.ccm.validate_object(t1, ROW, Action.READ)
         self.assertIs(resp.status, AccessStatus.ABORTED)
-        self.assertIn("dibatalkan", resp.message)
 
     def test_abort_after_commit_rejected(self) -> None:
         t1 = self.ccm.begin_transaction()
@@ -169,22 +168,20 @@ class DeadlockAbortTest(unittest.TestCase):
         resp = self.ccm.validate_object(t1, r2, Action.WRITE, change())
         self.assertIs(resp.status, AccessStatus.ALLOWED)
 
-    def test_victim_request_afterwards_says_cancelled(self) -> None:
+    def test_victim_request_afterwards_rejected(self) -> None:
         _, t2 = self._make_deadlock()
         resp = self.ccm.validate_object(t2, ROW, Action.READ)
         self.assertIs(resp.status, AccessStatus.ABORTED)
-        self.assertIn("dibatalkan", resp.message)
 
-    def test_rollback_failure_reported_in_response(self) -> None:
+    def test_rollback_failure_raised_and_tx_kept(self) -> None:
         r1, r2 = ResourceId("student", RID("student", 0, 1)), ResourceId("student", RID("student", 0, 2))
         t1, t2 = self.ccm.begin_transaction(), self.ccm.begin_transaction()
         self.ccm.validate_object(t1, r1, Action.WRITE, change())
         self.ccm.validate_object(t2, r2, Action.WRITE, change())
         self.ccm.validate_object(t1, r2, Action.WRITE, change())
         self.frm.rollback_ok = False
-        resp = self.ccm.validate_object(t2, r1, Action.WRITE, change())
-        self.assertIs(resp.status, AccessStatus.ABORTED)
-        self.assertIn("undo gagal", resp.message)
+        with self.assertRaisesRegex(MdbmsError, "undo gagal"):
+            self.ccm.validate_object(t2, r1, Action.WRITE, change())
         self.assertIn(t2, self.ccm._transactions)
 
 

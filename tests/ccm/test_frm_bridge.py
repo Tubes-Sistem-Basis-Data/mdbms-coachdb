@@ -45,6 +45,9 @@ class _FakeFrm:
         self.flushed.append(up_to_lsn)
         return not self.fail_flush
 
+    def rollback(self, tx_id: int) -> TxResult:
+        return TxResult(tx_id, TxStatus.ABORTED, ok=True)
+
 
 class FrmBridgeTest(unittest.TestCase):
     def setUp(self) -> None:

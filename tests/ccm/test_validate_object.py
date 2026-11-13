@@ -8,8 +8,9 @@ from common.transaction import (
     ChangeOp,
     DataChange,
     ResourceId,
+    TxResult,
+    TxStatus,
 )
-from common.transaction import TxResult, TxStatus
 from concurrency_control.frm_bridge import AbortCoordinator
 from concurrency_control.lock_manager import LockMode
 from concurrency_control.manager import CCManager
@@ -47,11 +48,8 @@ class _Bridge:
     def log_commit(self, tx_id: int) -> int:
         return 0
 
-    def log_abort_request(self, tx_id: int) -> int:
-        return 0
-
     def rollback(self, tx_id: int) -> TxResult:
-        return TxResult(tx_id=tx_id, status=TxStatus.ABORTED, ok=True)
+        return TxResult(tx_id, TxStatus.ABORTED, ok=True)
 
 
 class ValidateObjectTest(unittest.TestCase):

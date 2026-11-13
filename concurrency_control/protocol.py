@@ -1,5 +1,7 @@
+from _thread import LockType
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import Lock
 from common.transaction import AccessResponse, Action, ResourceId, TxStatus
 
 
@@ -8,7 +10,8 @@ class Transaction:
     tx_id: int
     timestamp: int
     status: TxStatus = TxStatus.ACTIVE
-    abort_requested: bool = False
+    abort_requested: bool = field(default=False, init=False)
+    operation_lock: LockType = field(default_factory=Lock, init=False, repr=False, compare=False)
 
 
 class ConcurrencyProtocol(ABC):
