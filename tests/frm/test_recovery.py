@@ -34,6 +34,9 @@ class FakeStorageManager:
     def flush(self, page_ids: list[int] | None = None) -> None:
         self.calls.append("flush")
 
+    def rebuild_indexes(self) -> None:
+        self.calls.append("rebuild_indexes")
+
 
 class FakeConcurrencyControl:
     """CCM minimal untuk checkpoint setelah recovery."""
@@ -243,6 +246,22 @@ class TestCheckpointDanKosong(RecoveryTestCase):
         self.assertEqual(sm.rows.get(second_rid), [2])
         self.assertEqual(sm.calls.count("insert:student:0:1"), 0)
         self.assertEqual(sm.calls.count("insert:student:0:2"), 1)
+
+    def test_recovery_membangun_ulang_index_sebelum_checkpoint(self) -> None:
+        rid = RID("student", 0, 1)
+        self._write(LogKind.BEGIN, 1)
+        self._write(LogKind.DATA, 1, self._change(rid, ChangeOp.INSERT, NO_RECORD, [1]))
+        last_lsn = self._write(LogKind.COMMIT, 1)
+        self.assertTrue(self.frm.flush_log(last_lsn))
+
+        frm, sm, _ = self._prepare_recovery()
+
+        result = frm.recover()
+
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(sm.calls.count("rebuild_indexes"), 1)
+        last_flush = len(sm.calls) - 1 - sm.calls[::-1].index("flush")
+        self.assertLess(sm.calls.index("rebuild_indexes"), last_flush)
 
     def test_wal_kosong_recovery_sukses(self) -> None:
         frm, sm, _ = self._prepare_recovery()

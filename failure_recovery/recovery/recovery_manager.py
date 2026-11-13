@@ -107,6 +107,7 @@ class RecoveryManager(RecoveryInterface):
 
     def _finalize(self, analysis: AnalysisResult) -> None:
         self._ready = True
+        self._rebuild_indexes()
         if self._checkpoint_service is None:
             return
         try:
@@ -115,3 +116,12 @@ class RecoveryManager(RecoveryInterface):
                 logger.warning("Checkpoint setelah recovery gagal: %s", result.message)
         except Exception as exc:
             logger.warning("Checkpoint setelah recovery gagal: %s", exc)
+
+    def _rebuild_indexes(self) -> None:
+        rebuild = getattr(self._sm, "rebuild_indexes", None)
+        if not callable(rebuild):
+            return
+        try:
+            rebuild()
+        except Exception as exc:
+            logger.warning("Rebuild index setelah recovery gagal: %s", exc)
