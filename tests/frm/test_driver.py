@@ -14,21 +14,18 @@ from failure_recovery import FailureRecoveryManager
 
 
 class TestFRMDriver(unittest.TestCase):
-    def test_active_scenarios_run_and_pending_recovery_does_not_pass(self) -> None:
+    def test_all_scenarios_run_successfully(self) -> None:
         results = FRMTestDriver().run_all()
 
         self.assertEqual(len(results), 11)
-        self.assertEqual(sum(r.passed for r in results), 10)
+        self.assertEqual(sum(r.passed for r in results), 11)
         self.assertEqual(sum(not r.passed and not r.skipped for r in results), 0)
-        self.assertEqual(
-            {r.name for r in results if r.skipped},
-            {"pitr"},
-        )
+        self.assertEqual({r.name for r in results if r.skipped}, set())
         for case in FRMTestDriver().cases[-3:]:
             self.assertTrue(case.actions)
             self.assertIsNotNone(case.expected)
 
-    def test_recovery_cases_activate_when_placeholder_message_is_removed(self) -> None:
+    def test_recovery_cases_are_active_and_compare_results(self) -> None:
         driver = FRMTestDriver()
         completed = RecoveryResult(ok=True, message="recovery complete")
         with patch.object(FailureRecoveryManager, "recover", return_value=completed), \
