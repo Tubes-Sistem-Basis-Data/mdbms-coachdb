@@ -1,17 +1,8 @@
-"""SM-10/SM-11: index Hash untuk pencarian kesamaan.
-
-Hash hanya melayani ``search`` (equality). ``range`` mengembalikan kosong dan
-QO tidak pernah memilih Hash untuk predicate rentang; validasi ada di QO/QP.
-"""
-
 from __future__ import annotations
 
-from typing import Optional
-
 from common.storage import RID
-from storage_manager.errors import IndexDefinitionError
+from storage_manager.index.base import Index, Key
 from storage_manager.types import Value
-from storage_manager.index.manager import Index
 
 DEFAULT_BUCKETS = 64
 
@@ -22,11 +13,9 @@ class HashIndex(Index):
     ) -> None:
         super().__init__(table, column)
         self._n_buckets: int = n_buckets
-        self._buckets: list[dict] = [{} for _ in range(n_buckets)]
+        self._buckets: list[dict[Key, list[RID]]] = [{} for _ in range(n_buckets)]
 
-    def _bucket(self, key: Value) -> dict:
-        if not isinstance(key, (int, float, str, bytes, tuple)):
-            raise IndexDefinitionError(f"Key tidak bisa di-hash: {key!r}")
+    def _bucket(self, key: Key) -> dict[Key, list[RID]]:
         return self._buckets[hash(key) % self._n_buckets]
 
     def insert(self, key: Value, rid: RID) -> None:
@@ -57,10 +46,8 @@ class HashIndex(Index):
             return []
         return list(self._bucket(key).get(key, []))
 
-    def range(self, low: Optional[Value], high: Optional[Value]) -> list[RID]:
-        """Hash tidak mendukung rentang; selalu kosong."""
+    def range(self, low: Value | None, high: Value | None) -> list[RID]:
         return []
 
     def height(self) -> int:
-        """Hash bukan tree, jadi tidak punya tinggi node."""
         return 0

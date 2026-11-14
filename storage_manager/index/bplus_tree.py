@@ -1,25 +1,30 @@
-"""SM-10/SM-11: index B+Tree dengan dukungan duplicate key.
-
-Leaf menyimpan key unik beserta daftar RID untuk key tersebut, sehingga
-duplicate key tidak memakan slot key baru. Leaf dihubungkan lewat ``next``
-supaya range scan cukup menelusuri rantai leaf tanpa kembali ke root.
-"""
-
 from __future__ import annotations
 
-from abc import ABC
 from bisect import bisect_left, bisect_right
-from typing import Optional
+from typing import Any, cast
 
 from common.storage import RID
-from storage_manager.index.manager import Index, Value
+from storage_manager.index.base import Index, Key
+from storage_manager.types import Value
 
 DEFAULT_ORDER = 4
 
 
-class BPlusNode(ABC):
+def _bisect_left(keys: list[Key], key: Key) -> int:
+    return bisect_left(cast(Any, keys), key)
+
+
+def _bisect_right(keys: list[Key], key: Key) -> int:
+    return bisect_right(cast(Any, keys), key)
+
+
+def _greater(left: Any, right: Any) -> bool:
+    return left > right
+
+
+class BPlusNode:
     def __init__(self) -> None:
-        self.keys: list[Value] = []
+        self.keys: list[Key] = []
 
 
 class InternalNode(BPlusNode):
@@ -32,25 +37,16 @@ class LeafNode(BPlusNode):
     def __init__(self) -> None:
         super().__init__()
         self.values: list[list[RID]] = []
-        self.next: Optional[LeafNode] = None
+        self.next: LeafNode | None = None
 
 
 class BPlusTree(Index):
-    """B+Tree in-memory. ``order`` adalah jumlah maksimum key per node.
-
-    Invariant internal node: ``children[i]`` berisi key pada rentang
-    ``[keys[i-1], keys[i])``. Karena key di dalam satu node unik, separator
-    tidak pernah ambigu walaupun tabel memiliki banyak duplicate key.
-    """
-
     def __init__(
         self, table: str, column: str, order: int = DEFAULT_ORDER
     ) -> None:
         super().__init__(table, column)
         self._order: int = order
         self._root: BPlusNode = LeafNode()
-
-    # ------------------------------------------------------------------ insert
 
     def insert(self, key: Value, rid: RID) -> None:
         if key is None:
@@ -65,10 +61,10 @@ class BPlusTree(Index):
         return None
 
     def _insert_node(
-        self, node: BPlusNode, key: Value, rid: RID
-    ) -> Optional[tuple[Value, BPlusNode]]:
+        self, node: BPlusNode, key: Key, rid: RID
+    ) -> tuple[Key, BPlusNode] | None:
         if isinstance(node, LeafNode):
-            position = bisect_left(node.keys, key)
+            position = _bisect_left(node.keys, key)
             if position < len(node.keys) and node.keys[position] == key:
                 siblings = node.values[position]
                 if rid not in siblings:
@@ -81,7 +77,7 @@ class BPlusTree(Index):
             return None
 
         assert isinstance(node, InternalNode)
-        position = bisect_right(node.keys, key)
+        position = _bisect_right(node.keys, key)
         split = self._insert_node(node.children[position], key, rid)
         if split is None:
             return None
@@ -93,7 +89,7 @@ class BPlusTree(Index):
         return None
 
     @staticmethod
-    def _split_leaf(node: LeafNode) -> tuple[Value, LeafNode]:
+    def _split_leaf(node: LeafNode) -> tuple[Key, LeafNode]:
         middle = len(node.keys) // 2
         right = LeafNode()
         right.keys = node.keys[middle:]
@@ -102,12 +98,10 @@ class BPlusTree(Index):
         node.values = node.values[:middle]
         right.next = node.next
         node.next = right
-        # Separator = key terkecil di leaf kanan. Key di node kiri selalu
-        # lebih kecil karena key dalam satu node unik.
         return right.keys[0], right
 
     @staticmethod
-    def _split_internal(node: InternalNode) -> tuple[Value, InternalNode]:
+    def _split_internal(node: InternalNode) -> tuple[Key, InternalNode]:
         middle = len(node.keys) // 2
         separator = node.keys[middle]
         right = InternalNode()
@@ -117,22 +111,24 @@ class BPlusTree(Index):
         node.children = node.children[:middle + 1]
         return separator, right
 
-    # ------------------------------------------------------------------ search
-
     def search(self, key: Value) -> list[RID]:
         if key is None:
             return []
-        leaf = self._find_leaf(key)
-        position = bisect_left(leaf.keys, key)
-        if position < len(leaf.keys) and leaf.keys[position] == key:
-            return list(leaf.values[position])
+        try:
+            leaf = self._find_leaf(key)
+            position = _bisect_left(leaf.keys, key)
+            if position < len(leaf.keys) and leaf.keys[position] == key:
+                return list(leaf.values[position])
+        except TypeError:
+            return []
         return []
 
-    def _find_leaf(self, key: Value) -> LeafNode:
+    def _find_leaf(self, key: Key) -> LeafNode:
         node = self._root
         while isinstance(node, InternalNode):
-            position = bisect_right(node.keys, key)
+            position = _bisect_right(node.keys, key)
             node = node.children[position]
+        assert isinstance(node, LeafNode)
         return node
 
     def _leftmost_leaf(self) -> LeafNode:
@@ -143,50 +139,53 @@ class BPlusTree(Index):
             node = node.children[0]
         if isinstance(node, LeafNode):
             return node
-        # Tree kosong selalu berupa satu LeafNode; fallback ini hanya jaring
-        # pengaman bila invariant rusak.
         return LeafNode()
 
-    # ------------------------------------------------------------------- range
-
-    def range(self, low: Optional[Value], high: Optional[Value]) -> list[RID]:
-        if low is not None and high is not None and low > high:
+    def range(self, low: Value | None, high: Value | None) -> list[RID]:
+        try:
+            if low is not None and high is not None and _greater(low, high):
+                return []
+        except TypeError:
             return []
         if isinstance(self._root, LeafNode) and not self._root.keys:
             return []
 
-        leaf = self._leftmost_leaf() if low is None else self._find_leaf(low)
-        position = 0 if low is None else bisect_left(leaf.keys, low)
-        result: list[RID] = []
-        while leaf is not None:
-            for index in range(position, len(leaf.keys)):
-                key = leaf.keys[index]
-                if high is not None and key > high:
-                    return result
-                result.extend(leaf.values[index])
-            leaf = leaf.next
-            position = 0
-        return result
-
-    # ------------------------------------------------------------------ delete
+        try:
+            leaf: LeafNode | None = (
+                self._leftmost_leaf() if low is None else self._find_leaf(low)
+            )
+            position = 0 if low is None else _bisect_left(leaf.keys, low)
+            result: list[RID] = []
+            while leaf is not None:
+                for index in range(position, len(leaf.keys)):
+                    key = leaf.keys[index]
+                    if high is not None and _greater(key, high):
+                        return result
+                    result.extend(leaf.values[index])
+                leaf = leaf.next
+                position = 0
+            return result
+        except TypeError:
+            return []
 
     def delete(self, key: Value, rid: RID) -> None:
         if key is None:
             return None
-        leaf = self._find_leaf(key)
-        position = bisect_left(leaf.keys, key)
-        if position >= len(leaf.keys) or leaf.keys[position] != key:
-            return None
-        siblings = leaf.values[position]
         try:
-            siblings.remove(rid)
-        except ValueError:
+            leaf = self._find_leaf(key)
+            position = _bisect_left(leaf.keys, key)
+            if position >= len(leaf.keys) or leaf.keys[position] != key:
+                return None
+            siblings = leaf.values[position]
+            try:
+                siblings.remove(rid)
+            except ValueError:
+                return None
+            if not siblings:
+                del leaf.keys[position]
+                del leaf.values[position]
+        except TypeError:
             return None
-        if not siblings:
-            del leaf.keys[position]
-            del leaf.values[position]
-        # Node yang menjadi kosong dibiarkan; separator lama tetap menjadi
-        # panduan routing yang valid. Rebuild dilakukan saat startup/recovery.
         return None
 
     def height(self) -> int:

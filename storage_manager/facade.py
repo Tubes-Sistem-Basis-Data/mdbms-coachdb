@@ -40,7 +40,6 @@ class StorageManager(StorageManagerBase):
             self._lock, self._buffer, self._catalog, self._index_manager, self._stats
         )
         self._log_flusher: Callable[[int], bool] | None = None
-        # Index tidak ikut snapshot; bangun ulang dari isi tabel di katalog.
         self._index_manager.rebuild_all()
 
     # Kontrak StorageManager

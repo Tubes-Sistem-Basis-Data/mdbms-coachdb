@@ -1,51 +1,17 @@
-"""SM-10/SM-11: registry index dan pemeliharaannya.
-
-Index tidak ikut di-snapshot. Metadata index disimpan di katalog, sedangkan
-struktur in-memory dibangun ulang dari isi tabel saat startup/recovery lewat
-``rebuild_all``. ``IndexManager`` memegang lock sendiri supaya method facade
-tetap thread-safe tanpa pemanggil perlu memegang lock.
-"""
-
 from __future__ import annotations
 
 import threading
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Callable, Iterator, Optional
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Any, cast
 
 from common.catalog import DataType, IndexInfo, IndexKind, TableSchema
 from common.errors import IndexDefinitionError
 from common.storage import RID, Row
+from storage_manager.index.base import Index
 from storage_manager.types import Value
 
 if TYPE_CHECKING:
     from storage_manager.catalog import Catalog
-
-
-class Index(ABC):
-
-    def __init__(self, table: str, column: str) -> None:
-        self.table: str = table
-        self.column: str = column
-
-    @abstractmethod
-    def insert(self, key: Value, rid: RID) -> None:
-        ...
-
-    @abstractmethod
-    def delete(self, key: Value, rid: RID) -> None:
-        ...
-
-    @abstractmethod
-    def search(self, key: Value) -> list[RID]:
-        ...
-
-    @abstractmethod
-    def range(self, low: Optional[Value], high: Optional[Value]) -> list[RID]:
-        ...
-
-    @abstractmethod
-    def height(self) -> int:
-        ...
 
 
 class IndexManager:
@@ -54,13 +20,11 @@ class IndexManager:
         catalog: Catalog,
         scan_fn: Callable[[str], Iterator[Row]],
     ) -> None:
-        self._catalog = catalog
-        self._scan_fn = scan_fn
+        self._catalog: Catalog = catalog
+        self._scan_fn: Callable[[str], Iterator[Row]] = scan_fn
         self._indexes: dict[str, Index] = {}
         self._rid_keys: dict[str, dict[RID, Value]] = {}
-        self._lock = threading.RLock()
-
-    # ------------------------------------------------------------------ create
+        self._lock: Any = threading.RLock()
 
     def create_index(
         self, name: str, table: str, column: str, kind: IndexKind
@@ -71,32 +35,25 @@ class IndexManager:
                 raise IndexDefinitionError(
                     f"Kolom {column} tidak ada di tabel {table}"
                 )
-            if not isinstance(kind, IndexKind):
-                raise IndexDefinitionError(f"Jenis index tidak valid: {kind!r}")
             if (
-                name in self._indexes
+                not name
+                or not isinstance(kind, IndexKind)
+                or name in self._indexes
                 or any(info.name == name for info in self._catalog.list_indexes())
                 or any(info.column == column for info in schema.indexes)
             ):
                 raise IndexDefinitionError(f"Definisi index tidak valid: {name}")
             info = IndexInfo(name=name, table=table, column=column, kind=kind)
 
-        # Scan tabel di luar lock manager: scan memakai lock facade, sedangkan
-        # lookup memegang lock facade lalu meminta lock manager. Menahan lock
-        # manager saat scan bisa menimbulkan lock-order inversion.
         index, rid_keys = self._build(info)
 
         with self._lock:
-            # register_index memvalidasi ulang nama/kolom, jadi pembangunan
-            # paralel tidak bisa menghasilkan metadata ganda.
             self._catalog.register_index(info)
             self._indexes[name] = index
             self._rid_keys[name] = rid_keys
         return IndexInfo(name=name, table=table, column=column, kind=kind)
 
     def _make_index(self, info: IndexInfo) -> Index:
-        # Import lokal untuk menghindari circular import: bplus_tree dan
-        # hash_index sama-sama meng-import Index dari modul ini.
         from storage_manager.index.bplus_tree import BPlusTree
         from storage_manager.index.hash_index import HashIndex
 
@@ -110,31 +67,29 @@ class IndexManager:
         index = self._make_index(info)
         schema = self._catalog.get_table_schema(info.table)
         position = schema.column_index(info.column)
-        is_char = schema.columns[position].type is DataType.CHAR
         rid_keys: dict[RID, Value] = {}
         for row in self._scan_fn(info.table):
-            key = row.values[position]
+            key = cast(Value, row.values[position])
+            key = self._normalize(schema, info.column, key)
             if key is None:
                 continue
-            if is_char and isinstance(key, str):
-                key = key.rstrip(" ")
             index.insert(key, row.rid)
             rid_keys[row.rid] = key
         return index, rid_keys
-
-    # ------------------------------------------------------------------ lookup
 
     def lookup(self, name: str, key: Value) -> list[RID]:
         with self._lock:
             index = self._get(name)
             schema = self._catalog.get_table_schema(index.table)
+            if not self._is_type_compatible(schema, index.column, key):
+                return []
             normalized = self._normalize(schema, index.column, key)
             if normalized is None:
                 return []
             return index.search(normalized)
 
     def range(
-        self, name: str, low: Optional[Value], high: Optional[Value]
+        self, name: str, low: Value | None, high: Value | None
     ) -> list[RID]:
         with self._lock:
             index = self._get(name)
@@ -145,6 +100,10 @@ class IndexManager:
                     f"Index Hash {name} hanya mendukung pencarian kesamaan"
                 )
             schema = self._catalog.get_table_schema(index.table)
+            if low is not None and not self._is_type_compatible(schema, index.column, low):
+                return []
+            if high is not None and not self._is_type_compatible(schema, index.column, high):
+                return []
             normalized_low = self._normalize(schema, index.column, low)
             normalized_high = self._normalize(schema, index.column, high)
             return index.range(normalized_low, normalized_high)
@@ -158,8 +117,6 @@ class IndexManager:
         if index is None:
             raise IndexDefinitionError(f"Index tidak ditemukan: {name}")
         return index
-
-    # ----------------------------------------------------------------- maintain
 
     def on_insert(self, table: str, values: tuple[Value, ...], rid: RID) -> None:
         with self._lock:
@@ -208,7 +165,9 @@ class IndexManager:
                 old_key = mapping.get(rid)
                 if old_key is None:
                     old_key = self._normalize(schema, info.column, old[position])
-                if old_key is not None and old_key != new_key:
+                if old_key == new_key:
+                    continue
+                if old_key is not None:
                     index.delete(old_key, rid)
                 if new_key is None:
                     mapping.pop(rid, None)
@@ -225,7 +184,6 @@ class IndexManager:
                 for info in self._catalog.list_indexes(table)
             ]
 
-        # Bangun di luar lock manager supaya scan tidak menahan lock ini.
         indexes: dict[str, Index] = {}
         rid_keys: dict[str, dict[RID, Value]] = {}
         for info in infos:
@@ -238,10 +196,8 @@ class IndexManager:
             self._rid_keys = rid_keys
         return None
 
-    # ------------------------------------------------------------------ helper
-
     def _apply_insert(
-        self, name: str, index: Index, rid: RID, key: Optional[Value]
+        self, name: str, index: Index, rid: RID, key: Value
     ) -> None:
         mapping = self._rid_keys.setdefault(name, {})
         previous = mapping.get(rid)
@@ -258,8 +214,19 @@ class IndexManager:
         return schema.column_index(column)
 
     @staticmethod
+    def _is_type_compatible(schema: TableSchema, column: str, value: Value) -> bool:
+        if value is None:
+            return True
+        position = schema.column_index(column)
+        col_type = schema.columns[position].type
+        if col_type in (DataType.INTEGER, DataType.FLOAT):
+            return isinstance(value, (int, float)) and not isinstance(value, bool)
+        if col_type in (DataType.CHAR, DataType.VARCHAR):
+            return isinstance(value, str)
+        return True
+
+    @staticmethod
     def _normalize(schema: TableSchema, column: str, value: Value) -> Value:
-        """CHAR dipadding spasi saat encode, jadi key index di-rstrip."""
         if value is None:
             return None
         position = schema.column_index(column)

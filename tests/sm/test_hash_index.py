@@ -33,7 +33,9 @@ class TestHashIndex(unittest.TestCase):
 
 
 class TestHashIndexOperations(unittest.TestCase):
-    def setUp(self):
+    index: HashIndex
+
+    def setUp(self) -> None:
         self.index = HashIndex("t", "c", n_buckets=8)
 
     def test_insert_and_search_duplicate_keys(self):

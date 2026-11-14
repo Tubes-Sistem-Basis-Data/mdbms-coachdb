@@ -22,9 +22,9 @@ def rid(slot: int, table: str = "t") -> RID:
 
 
 class TestBPlusTree(unittest.TestCase):
-    def test_index_is_abstract(self):
+    def test_index_is_abstract(self) -> None:
         with self.assertRaises(TypeError):
-            Index("t", "c")
+            type.__call__(Index, "t", "c")
 
     def test_bplustree_has_index_methods(self):
         for name in INDEX_METHODS:
@@ -58,7 +58,9 @@ class TestBPlusTree(unittest.TestCase):
 
 
 class TestBPlusTreeOperations(unittest.TestCase):
-    def setUp(self):
+    tree: BPlusTree
+
+    def setUp(self) -> None:
         self.tree = BPlusTree("t", "c", order=4)
 
     def test_insert_and_search_duplicate_keys(self):
@@ -139,6 +141,14 @@ class TestBPlusTreeOperations(unittest.TestCase):
             self.tree.insert(key, rid(slot))
         self.assertEqual(self.tree.search("IF"), [rid(1), rid(3)])
         self.assertEqual(self.tree.range("GO", "IF"), [rid(0), rid(1), rid(3)])
+
+    def test_incompatible_key_types(self):
+        self.tree.insert(10, rid(0))
+        self.assertEqual(self.tree.search("invalid"), [])
+        self.assertEqual(self.tree.range("a", "z"), [])
+        self.assertEqual(self.tree.range(1, "z"), [])
+        self.tree.delete("invalid", rid(0))
+        self.assertEqual(self.tree.search(10), [rid(0)])
 
 
 if __name__ == "__main__":
