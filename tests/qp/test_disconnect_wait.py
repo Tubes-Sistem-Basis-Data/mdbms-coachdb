@@ -8,10 +8,11 @@ from tempfile import TemporaryDirectory
 from threading import Event, Thread
 from time import monotonic, sleep
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from client import ClientCLI
 from common.catalog import ColumnSchema, DataType
+from common.interfaces import QueryProcessor, Session
 from common.transaction import AccessStatus, TxResult, TxStatus
 from concurrency_control import CCManager
 from failure_recovery import FailureRecoveryManager
@@ -65,9 +66,7 @@ class TestDisconnectDuringWait(unittest.TestCase):
         for conn in self.sockets:
             conn.close()
         self.server_thread.join(timeout=2)
-        for thread in self.server._client_threads:
-            thread.join(timeout=2)
-            self.assertFalse(thread.is_alive(), "handler client belum berhenti")
+        self.server.wait_closed()
 
     def wait_until(self, condition, message: str) -> None:
         deadline = monotonic() + 2
@@ -211,7 +210,8 @@ class TestDisconnectDuringWait(unittest.TestCase):
             self.start_query(writer, "DELETE FROM student;")
             self.assertTrue(waiting.wait(2))
             self.server.shutdown()
-            self.wait_until(lambda: not self.qp._sessions.active_sessions(), "shutdown belum membersihkan sesi")
+            self.server.wait_closed()
+            self.assertFalse(self.qp._sessions.active_sessions(), "shutdown belum membersihkan sesi")
         self.assertEqual([row.values for row in self.sm.scan("student")], self.original)
 
     def test_failed_undo_after_disconnect_keeps_session_and_locks_for_cleanup_retry(self) -> None:
@@ -238,6 +238,36 @@ class TestDisconnectDuringWait(unittest.TestCase):
         self.qp.close_session(session.session_id)
         self.assertIsNone(self.qp._sessions.get_session(session.session_id))
         self.assertEqual([row.values for row in self.sm.scan("student")], self.original)
+
+
+class TestShutdownWithoutReaderEOF(unittest.TestCase):
+    def test_idle_session_cleanup_does_not_wait_for_socket_reader_eof(self) -> None:
+        qp = Mock(spec=QueryProcessor)
+        qp.open_session.return_value = Session(session_id=1)
+        cleaned = Event()
+        qp.close_session.side_effect = lambda session_id: cleaned.set()
+        server = QueryServer(qp)
+        conn = Mock(spec=socket.socket)
+        reading, release = Event(), Event()
+
+        def delayed_reader(conn, requests, cancelled):
+            reading.set()
+            release.wait(5)
+            requests.put(None)
+
+        handler = Thread(target=server.handle_client, args=(conn,), daemon=True)
+        with patch.object(server, "_read_requests", side_effect=delayed_reader):
+            handler.start()
+            try:
+                self.assertTrue(reading.wait(1), "reader belum berjalan")
+                server.shutdown()
+                self.assertTrue(cleaned.wait(1), "cleanup sesi masih menunggu EOF reader")
+            finally:
+                release.set()
+                handler.join(timeout=2)
+        self.assertFalse(handler.is_alive())
+        qp.close_session.assert_called_once_with(1)
+        qp.execute_query.assert_not_called()
 
 
 if __name__ == "__main__":

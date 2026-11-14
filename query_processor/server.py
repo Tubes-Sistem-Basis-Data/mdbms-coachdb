@@ -32,7 +32,7 @@ class QueryServer:
         self._stopping = threading.Event()
         self._lock = threading.Lock()
         self._client_threads: list[threading.Thread] = []
-        self._connections: dict[socket.socket, threading.Event] = {}
+        self._connections: dict[socket.socket, tuple[threading.Event, Queue[str | None]]] = {}
 
     @property
     def port(self) -> int:
@@ -70,8 +70,12 @@ class QueryServer:
                     args=(conn, addr),
                     daemon=True,
                 )
-                self._client_threads.append(thread)
-                thread.start()
+                with self._lock:
+                    if self._stopping.is_set():
+                        conn.close()
+                        break
+                    self._client_threads.append(thread)
+                    thread.start()
         finally:
             self.shutdown()
 
@@ -81,16 +85,20 @@ class QueryServer:
         addr: tuple[str, int] | None = None,
     ) -> None:
         cancelled = threading.Event()
+        requests: Queue[str | None] = Queue()
         with self._lock:
             if self._stopping.is_set():
                 conn.close()
                 return
-            self._connections[conn] = cancelled
+            self._connections[conn] = (cancelled, requests)
+
+        def is_cancelled() -> bool:
+            return self._stopping.is_set() or cancelled.is_set()
+
         session: Session | None = None
         reader_thread: threading.Thread | None = None
         try:
             session = self._qp.open_session()
-            requests: Queue[str | None] = Queue()
             # Pembaca tetap dapat mendeteksi EOF ketika executor menunggu CCM.
             reader_thread = threading.Thread(
                 target=self._read_requests, args=(conn, requests, cancelled), daemon=True
@@ -98,7 +106,7 @@ class QueryServer:
             reader_thread.start()
             while True:
                 raw_line = requests.get()
-                if raw_line is None or cancelled.is_set():
+                if raw_line is None or is_cancelled():
                     break
                 line = raw_line.strip()
                 if not line:
@@ -135,9 +143,9 @@ class QueryServer:
                     self._send_response(conn, err_res, session.session_id)
                     continue
 
-                with cancellation_scope(cancelled.is_set):
+                with cancellation_scope(is_cancelled):
                     result = self._qp.execute_query(sql, session)
-                if cancelled.is_set():
+                if is_cancelled():
                     break
                 self._send_response(conn, result, session.session_id)
         except (ConnectionError, OSError):
@@ -148,12 +156,12 @@ class QueryServer:
             cancelled.set()
             with suppress(OSError):
                 conn.shutdown(socket.SHUT_RDWR)
-            if reader_thread is not None:
-                reader_thread.join(timeout=1.0)
             try:
                 if session is not None:
                     self._qp.close_session(session.session_id)
             finally:
+                if reader_thread is not None:
+                    reader_thread.join(timeout=1.0)
                 with suppress(OSError):
                     conn.close()
                 with self._lock:
@@ -197,15 +205,18 @@ class QueryServer:
         if sock is not None:
             with suppress(OSError):
                 sock.close()
-        for conn, cancelled in connections:
+        for _, (cancelled, requests) in connections:
             cancelled.set()
+            requests.put(None)
+        for conn, _ in connections:
             with suppress(OSError):
                 conn.shutdown(socket.SHUT_RDWR)
 
     def wait_closed(self, timeout: float = 5.0) -> None:
         """Tunggu handler selesai sebelum backend ditutup."""
         deadline = monotonic() + timeout
-        threads = [thread for thread in self._client_threads if thread is not threading.current_thread()]
+        with self._lock:
+            threads = [thread for thread in self._client_threads if thread is not threading.current_thread()]
         for thread in threads:
             thread.join(timeout=max(0.0, deadline - monotonic()))
         if any(thread.is_alive() for thread in threads):

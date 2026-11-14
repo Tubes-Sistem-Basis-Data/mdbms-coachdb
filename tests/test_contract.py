@@ -96,20 +96,22 @@ class TestReturnTypes(unittest.TestCase):
     """Setiap method facade bisa dipanggil dan mengembalikan tipe sesuai kontrak."""
 
     def setUp(self):
+        from failure_recovery.log import codec
+
+        self.addCleanup(codec.set_log_path, codec.get_log_path())
         self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
         self.sm = SMFacade(self._tmp.name)
         from common.catalog import ColumnSchema, DataType
         self.sm._catalog.create_table("student", (ColumnSchema("id", DataType.INTEGER),), ("id",), ())
-        self.frm = FRMFacade()
+        self.frm = FRMFacade(log_path=os.path.join(self._tmp.name, "wal.log"))
         self.ccm = CCManager(self.frm)
         self.frm.set_dependencies(self.sm, self.ccm)
         self.sm.set_log_flusher(self.frm.flush_log)
         self.qo = QueryOptimizerFacade(self.sm)
         self.qp = QueryProcessorFacade(self.qo, self.sm, self.ccm, self.frm)
+        self.addCleanup(self.qp.close)
         self.rid = RID("student", 0, 0)
-
-    def tearDown(self):
-        self._tmp.cleanup()
 
     def test_query_processor(self):
         session = self.qp.open_session()
@@ -182,10 +184,15 @@ class TestReturnTypes(unittest.TestCase):
 class TestBootstrap(unittest.TestCase):
     def test_main_bootstrap_jalan(self):
         import main
+        from failure_recovery.log import codec
 
+        self.addCleanup(codec.set_log_path, codec.get_log_path())
         with tempfile.TemporaryDirectory() as tmp:
             qp = main.bootstrap(main.parse_args(["--data-dir", tmp]))
-        self.assertIsInstance(qp, QueryProcessor)
+            try:
+                self.assertIsInstance(qp, QueryProcessor)
+            finally:
+                main.close_runtime(qp)
 
 
 class TestSharedTypes(unittest.TestCase):
