@@ -6,9 +6,9 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from common.catalog import ColumnSchema, DataType
-from common.errors import TransactionAbortedError
+from common.errors import StorageError, TransactionAbortedError
 from common.log import LogKind, LogResult
-from common.transaction import AccessStatus, Action, ChangeOp
+from common.transaction import AccessStatus, Action, ChangeOp, ResourceId, TxResult, TxStatus
 from concurrency_control.manager import CCManager
 from failure_recovery import FailureRecoveryManager
 from failure_recovery.log import codec
@@ -132,6 +132,79 @@ class TestExecContextIntegration(unittest.TestCase):
         self.assertEqual([row.values for row in self.sm.scan("student")], self.original)
         self.assertEqual([record.kind for record in self.frm.read_log()],
                          [LogKind.BEGIN, LogKind.DATA, LogKind.ABORT_REQUEST, LogKind.ABORT])
+
+    def assert_rollback_retry_restores_partial_write(self, explicit: bool) -> None:
+        if explicit:
+            self.execute_ok("BEGIN;")
+        update = self.sm.update
+
+        def fail_second_write(table, rid, values, lsn):
+            if rid.slot == 1:
+                raise StorageError("write gagal")
+            return update(table, rid, values, lsn)
+
+        with patch.object(self.sm, "update", side_effect=fail_second_write), \
+             patch.object(self.frm, "rollback", side_effect=lambda tx: TxResult(
+                 tx, TxStatus.FAILED, False, "undo gagal"
+             )) as rollback:
+            result = self.qp.execute_query("UPDATE student SET name = 'new';", self.session)
+
+        self.assertFalse(result.ok)
+        self.assertIn("write gagal", result.message)
+        self.assertIn("undo gagal", result.message)
+        tx_id = self.session.tx_id
+        self.assertIsNotNone(tx_id)
+        self.assertEqual(self.session.in_explicit_tx, explicit)
+        rollback.assert_called_once_with(tx_id)
+        self.assertEqual([row.values for row in self.sm.scan("student")],
+                         [[1, "new"], [2, "two"]])
+
+        with patch.object(self.qp._qo, "parse_query", wraps=self.qp._qo.parse_query) as parse:
+            for sql in ("BEGIN;", "COMMIT;", "SELECT * FROM student;", "DELETE FROM student;"):
+                with self.subTest(sql=sql):
+                    blocked = self.qp.execute_query(sql, self.session)
+                    self.assertFalse(blocked.ok)
+                    self.assertIn("Rollback", blocked.message)
+                    self.assertEqual(self.session.tx_id, tx_id)
+            parse.assert_not_called()
+
+        other_id = self.ccm.begin_transaction()
+        self.addCleanup(self.ccm.abort, other_id)
+        resource = ResourceId("student")
+        self.assertIs(self.ccm.validate_object(other_id, resource, Action.READ).status,
+                      AccessStatus.WAIT)
+        self.execute_ok("ABORT;")
+        self.assertIsNone(self.session.tx_id)
+        self.assertFalse(self.session.in_explicit_tx)
+        self.assertEqual([row.values for row in self.sm.scan("student")], self.original)
+        self.assertIs(self.ccm.validate_object(other_id, resource, Action.READ).status,
+                      AccessStatus.ALLOWED)
+        self.assertEqual([record.kind for record in self.frm.read_log(tx_id)],
+                         [LogKind.BEGIN, LogKind.DATA, LogKind.DATA,
+                          LogKind.ABORT_REQUEST, LogKind.ABORT])
+
+    def test_explicit_failed_rollback_retains_locks_until_abort_retry(self) -> None:
+        self.assert_rollback_retry_restores_partial_write(explicit=True)
+
+    def test_autocommit_failed_rollback_retains_locks_until_abort_retry(self) -> None:
+        self.assert_rollback_retry_restores_partial_write(explicit=False)
+
+    def test_disconnect_failed_rollback_keeps_session_for_cleanup_retry(self) -> None:
+        self.execute_ok("BEGIN;")
+        self.execute_ok("UPDATE student SET name = 'new' WHERE id = 1;")
+        tx_id = self.session.tx_id
+        with patch.object(self.frm, "rollback", return_value=TxResult(
+            tx_id, TxStatus.FAILED, False, "undo gagal"
+        )) as rollback, self.assertLogs("coachdb.qp", level="ERROR"):
+            self.qp.close_session(self.session.session_id)
+
+        rollback.assert_called_once_with(tx_id)
+        self.assertEqual(self.session.tx_id, tx_id)
+        self.assertIs(self.qp._sessions.get_session(self.session.session_id), self.session)
+        self.qp.close_session(self.session.session_id)
+        self.assertIsNone(self.session.tx_id)
+        self.assertIsNone(self.qp._sessions.get_session(self.session.session_id))
+        self.assertEqual([row.values for row in self.sm.scan("student")], self.original)
 
     def test_real_lock_wait_retries_without_duplicate_data_logs(self) -> None:
         reader_id = self.ccm.begin_transaction()

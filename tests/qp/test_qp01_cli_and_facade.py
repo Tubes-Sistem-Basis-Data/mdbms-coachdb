@@ -706,6 +706,99 @@ class TestQueryProcessorFacade(unittest.TestCase):
         with self.assertLogs("coachdb.qp", level="ERROR"):
             self.qp.close_session(session.session_id)
         self.ccm.abort.assert_called_once_with(1)
+        self.assertIs(self.qp._sessions.get_session(session.session_id), session)
+        self.assertEqual(session.tx_id, 1)
+
+        self.ccm.abort.return_value = TxResult(1, TxStatus.ABORTED, True)
+        self.qp.close_session(session.session_id)
+        self.assertIsNone(self.qp._sessions.get_session(session.session_id))
+        self.assertIsNone(session.tx_id)
+        self.assertEqual(self.ccm.abort.call_count, 2)
+
+    def test_runtime_rollback_failure_blocks_commands_and_allows_abort_retry(self) -> None:
+        session = self.qp.open_session()
+        self.qp.execute_query("BEGIN;", session)
+        self.ccm.abort = Mock(return_value=TxResult(1, TxStatus.FAILED, False, "undo gagal"))
+
+        result = self.qp.execute_query("SELECT STORAGE_ERR FROM student;", session)
+
+        self.assertFalse(result.ok)
+        self.assertIn("halaman rusak", result.message)
+        self.assertIn("undo gagal", result.message)
+        self.assertEqual(session.tx_id, 1)
+        self.assertTrue(session.in_explicit_tx)
+        self.ccm.abort.assert_called_once_with(1)
+        self.qo.parse_query = Mock(wraps=self.qo.parse_query)
+        for sql in (
+            "SELECT * FROM student;", "UPDATE student SET gpa = 4.0;", "BEGIN;",
+            "COMMIT;", "CHECKPOINT;", "EXPLAIN SELECT * FROM student;", "SHOW LOG;",
+        ):
+            with self.subTest(sql=sql):
+                result = self.qp.execute_query(sql, session)
+                self.assertFalse(result.ok)
+                self.assertIn("Rollback", result.message)
+                self.assertEqual(session.tx_id, 1)
+        self.qo.parse_query.assert_not_called()
+        self.ccm.abort.assert_called_once_with(1)
+        self.assertEqual(self.ccm.begun, [1])
+
+        self.ccm.abort.return_value = TxResult(1, TxStatus.ABORTED, True)
+        self.assertTrue(self.qp.execute_query("  aBoRt ; ", session).ok)
+        self.assertIsNone(session.tx_id)
+        self.assertFalse(session.in_explicit_tx)
+        self.assertTrue(self.qp.execute_query("SELECT * FROM student;", session).ok)
+
+    def test_autocommit_rollback_failure_can_be_retried_with_abort(self) -> None:
+        session = self.qp.open_session()
+        self.ccm.abort = Mock(side_effect=LogError("undo gagal"))
+
+        result = self.qp.execute_query("SELECT STORAGE_ERR FROM student;", session)
+
+        self.assertFalse(result.ok)
+        self.assertIn("halaman rusak", result.message)
+        self.assertIn("undo gagal", result.message)
+        self.assertEqual(session.tx_id, 1)
+        self.assertFalse(session.in_explicit_tx)
+        self.assertFalse(self.qp.execute_query("BEGIN;", session).ok)
+        self.assertFalse(self.qp.execute_query("COMMIT;", session).ok)
+        self.assertEqual(self.ccm.begun, [1])
+        self.ccm.abort.assert_called_once_with(1)
+
+        self.ccm.abort.side_effect = None
+        self.ccm.abort.return_value = TxResult(1, TxStatus.ABORTED, True)
+        self.assertTrue(self.qp.execute_query("ABORT;", session).ok)
+        self.assertIsNone(session.tx_id)
+        self.assertTrue(self.qp.execute_query("SELECT * FROM student;", session).ok)
+
+    def test_abort_command_failure_does_not_allow_followup_query(self) -> None:
+        session = self.qp.open_session()
+        self.qp.execute_query("BEGIN;", session)
+        self.ccm.abort = Mock(return_value=TxResult(1, TxStatus.FAILED, False, "undo gagal"))
+        self.assertFalse(self.qp.execute_query("ABORT;", session).ok)
+        self.translator.build = Mock(wraps=self.translator.build)
+
+        result = self.qp.execute_query("SELECT * FROM student;", session)
+
+        self.assertFalse(result.ok)
+        self.assertIn("Rollback", result.message)
+        self.assertEqual(session.tx_id, 1)
+        self.translator.build.assert_not_called()
+        self.ccm.abort.assert_called_once_with(1)
+
+    def test_internal_error_reports_failed_cleanup_without_losing_transaction(self) -> None:
+        session = self.qp.open_session()
+        self.qp.execute_query("BEGIN;", session)
+        self.ccm.abort = Mock(side_effect=LogError("undo gagal"))
+
+        with self.assertLogs("coachdb.qp", level="ERROR"):
+            result = self.qp.execute_query("SELECT INTERNAL_ERR FROM student;", session)
+
+        self.assertFalse(result.ok)
+        self.assertIn("bug tak terduga", result.message)
+        self.assertIn("undo gagal", result.message)
+        self.assertEqual(session.tx_id, 1)
+        self.assertFalse(self.qp.execute_query("BEGIN;", session).ok)
+        self.ccm.abort.assert_called_once_with(1)
 
     def test_meta_commands_explain_checkpoint_show_log_restore(self) -> None:
         session = self.qp.open_session()
