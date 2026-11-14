@@ -8,10 +8,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from common.errors import LogError
+from common.errors import LogError, LogWriteError
 from common.log import LogKind, LogRecord, RecoveryTarget
 from common.storage import RID
-from common.transaction import ChangeOp, NO_RECORD
+from common.transaction import NO_RECORD, ChangeOp
 from failure_recovery.log import codec
 from failure_recovery.log.log_reader import LogReader
 from failure_recovery.log.wal_logger import WalLogger
@@ -61,6 +61,14 @@ class TestAppend(WalLoggerTestCase):
         lsn = self.logger.append(record)
         self.assertEqual(record.lsn, lsn)
         self.assertGreater(record.timestamp, 0.0)
+
+    def test_append_mengisi_prev_lsn_transaksi_sama(self):
+        begin = LogRecord(LogKind.BEGIN, tx_id=1)
+        data = LogRecord(LogKind.DATA, tx_id=1)
+        self.logger.append(begin)
+        self.logger.append(data)
+        self.assertEqual(begin.prev_lsn, -1)
+        self.assertEqual(data.prev_lsn, begin.lsn)
 
     def test_record_tidak_valid_melempar_log_error(self):
         with self.assertRaises(LogError):
@@ -162,11 +170,12 @@ class TestFlush(WalLoggerTestCase):
             self.logger.flush_log_until(50)
             fsync.assert_called_once()
 
-    def test_gagal_fsync_melempar_log_error(self):
+    def test_gagal_fsync_melempar_log_write_error(self):
         self.logger.log_begin(1)
-        with patch("failure_recovery.log.wal_logger.os.fsync", side_effect=OSError("disk penuh")):
-            with self.assertRaises(LogError):
-                self.logger.flush_log_until(1)
+        with patch(
+            "failure_recovery.log.wal_logger.os.fsync", side_effect=OSError("disk penuh")
+        ), self.assertRaises(LogWriteError):
+            self.logger.flush_log_until(1)
 
     def test_data_terlihat_reader_tanpa_fsync(self):
         self.logger.log_begin(1)
@@ -191,11 +200,13 @@ class TestLogLain(WalLoggerTestCase):
         kinds = [r.kind for r in self.reader.read_log(-1)]
         self.assertEqual(kinds, [LogKind.CHECKPOINT_BEGIN, LogKind.CHECKPOINT_END])
 
-    def test_clr_dan_restore_stub(self):
+    def test_clr_tetap_stub_dan_restore_tercatat(self):
         rid = RID("t", 0, 0)
         self.assertEqual(self.logger.log_clr(1, rid, [1], [2]), 0)
-        self.assertEqual(self.logger.log_restore(RecoveryTarget(tx_id=1)), 0)
-        self.assertEqual(self.reader.read_log(-1), [])
+        lsn = self.logger.log_restore(RecoveryTarget(tx_id=1))
+        self.assertEqual(lsn, 1)
+        records = self.reader.read_log(-1)
+        self.assertEqual([record.kind for record in records], [LogKind.RESTORE])
 
 
 class TestKonkurensi(WalLoggerTestCase):

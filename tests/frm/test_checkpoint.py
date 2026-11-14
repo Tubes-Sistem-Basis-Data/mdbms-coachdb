@@ -10,7 +10,7 @@ from unittest.mock import ANY, Mock
 
 from common.errors import LogError, StorageError
 from common.interfaces import ConcurrencyControlManager, StorageManager
-from common.log import LogKind
+from common.log import LogKind, RecoveryTarget
 from failure_recovery import FailureRecoveryManager
 from failure_recovery.checkpoint.checkpoint_manager import CheckpointManager
 from failure_recovery.checkpoint.checkpoint_store import CheckpointStore
@@ -74,6 +74,14 @@ class TestCheckpointManual(CheckpointTestCase):
         self.assertEqual(meta.checkpoint_lsn, result.lsn)
         self.assertEqual(meta.active_tx, [])
         self.assertEqual(meta.snapshot_path, "")
+
+    def test_restore_tanpa_pitr_gagal_tanpa_checkpoint(self):
+        result = self.manager.restore_to(RecoveryTarget(tx_id=1))
+
+        self.assertFalse(result.ok)
+        self.assertIn("PITR", result.message)
+        self.sm.flush.assert_not_called()
+        self.assertEqual(self._kinds(), [])
 
     def test_log_lama_dan_max_tx_id_dipertahankan(self):
         self.logger.log_begin(17)
