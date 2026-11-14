@@ -136,6 +136,15 @@ class FakeStorageManager:
         self._check_table(table)
         self._rows[table].clear()
 
+    def list_indexes(self, table: str | None = None) -> list[IndexInfo]:
+        if table is not None:
+            self._check_table(table)
+        return [
+            info
+            for info in self._indexes.values()
+            if table is None or info.table == table
+        ]
+
     def create_index(self, info: IndexInfo) -> None:
         schema = self._check_table(info.table)
         if info.column not in schema.column_names():

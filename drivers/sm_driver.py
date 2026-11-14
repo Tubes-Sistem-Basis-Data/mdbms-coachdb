@@ -13,10 +13,41 @@ import uuid
 from dataclasses import dataclass
 from typing import Callable
 
-from common.catalog import DataType, IndexInfo
+from common.catalog import ColumnSchema, DataType, IndexInfo
 from common.errors import MdbmsError
 from common.interfaces import StorageManager
 from common.storage import RID, Row
+
+
+def _seed_sample(sm: StorageManager) -> None:
+    """Isi tabel contoh driver. Facade DDL (create_table) masih stub."""
+    existing = set(sm.list_tables())
+    if "student" not in existing:
+        sm._catalog.create_table(
+            "student",
+            (
+                ColumnSchema("id", DataType.INTEGER, nullable=False),
+                ColumnSchema("name", DataType.VARCHAR, 50),
+                ColumnSchema("gpa", DataType.FLOAT),
+            ),
+            ("id",),
+            (),
+        )
+        sm.bulk_load(
+            "student",
+            [[1, "Andi", 3.75], [2, "Budi", 3.20], [3, "Citra", 3.90]],
+        )
+    if "enrollment" not in existing:
+        sm._catalog.create_table(
+            "enrollment",
+            (
+                ColumnSchema("student_id", DataType.INTEGER, nullable=False),
+                ColumnSchema("course_id", DataType.INTEGER, nullable=False),
+            ),
+            ("student_id", "course_id"),
+            (),
+        )
+        sm.bulk_load("enrollment", [[1, 101], [2, 101]])
 
 
 @dataclass
@@ -38,6 +69,7 @@ class SMDriver:
         out: Callable[[str], None] | None = None,
     ) -> None:
         self._sm = sm
+        self._owns_sm = False
         self._data_dir = data_dir
         self._out = out or print
         self._results: list[ScenarioResult] = []
@@ -85,7 +117,13 @@ class SMDriver:
         return list(self._scenario_methods())
 
     def close(self) -> None:
-        """Bersihkan direktori sementara milik driver."""
+        """Tutup SM milik driver, lalu bersihkan direktori sementara."""
+        if self._owns_sm and self._sm is not None:
+            close = getattr(self._sm, "close", None)
+            if callable(close):
+                close()
+            self._sm = None
+            self._owns_sm = False
         if self._tmp_dir is not None:
             self._tmp_dir.cleanup()
             self._tmp_dir = None
@@ -100,15 +138,20 @@ class SMDriver:
     def _build_storage(self) -> StorageManager:
         try:
             from mocks.mock_storage_manager import MockStorageManager
-
-            return MockStorageManager(self._data_dir)
         except ImportError:
-            from storage_manager.facade import StorageManager as RealStorageManager
+            pass
+        else:
+            return MockStorageManager(self._data_dir)
 
-            if self._data_dir is None:
-                self._tmp_dir = tempfile.TemporaryDirectory(prefix="coachdb-sm-")
-                self._data_dir = self._tmp_dir.name
-            return RealStorageManager(self._data_dir)
+        from storage_manager.facade import StorageManager as RealStorageManager
+
+        if self._data_dir is None:
+            self._tmp_dir = tempfile.TemporaryDirectory(prefix="coachdb-sm-")
+            self._data_dir = self._tmp_dir.name
+        sm = RealStorageManager(self._data_dir)
+        self._owns_sm = True
+        _seed_sample(sm)
+        return sm
 
     def _scenario_methods(self) -> dict[str, Callable[[StorageManager], None]]:
         return {
@@ -188,6 +231,18 @@ class SMDriver:
         sm.insert(table, rid, SMDriver._fresh_values(sm, table), lsn)
         return rid
 
+    @staticmethod
+    def _ensure_index(sm: StorageManager, table: str, column: str) -> None:
+        if any(info.column == column for info in sm.list_indexes(table)):
+            return
+        sm.create_index(
+            IndexInfo(
+                name=f"idx_driver_{uuid.uuid4().hex}",
+                table=table,
+                column=column,
+            )
+        )
+
     # --------------------------------------------------------------- skenario
 
     def _list_tables_and_schema(self, sm: StorageManager) -> None:
@@ -252,7 +307,7 @@ class SMDriver:
         rid = self._insert_fresh(sm, table, 1)
         row = sm.fetch(table, rid)
         assert row is not None
-        sm.insert(table, rid, row.values, 2)
+        sm.insert(table, rid, row.values, None)
         matches = [item for item in sm.scan(table) if item.rid == rid]
         if len(matches) != 1:
             raise AssertionError("insert ulang membuat baris ganda")
@@ -274,7 +329,7 @@ class SMDriver:
         sm.delete(table, rid, 2)
         if sm.fetch(table, rid) is not None:
             raise AssertionError("fetch setelah delete harus None")
-        sm.delete(table, rid, 3)
+        sm.delete(table, rid, None)
         if len(self._rows(sm, table)) != before - 1:
             raise AssertionError("delete ganda mengubah jumlah baris")
 
@@ -288,7 +343,7 @@ class SMDriver:
         if self._rows(sm, table):
             raise AssertionError("delete_all menyisakan baris")
         for row in rows:
-            sm.insert(table, row.rid, row.values, 1)
+            sm.insert(table, row.rid, row.values, None)
         for row in rows:
             found = sm.fetch(table, row.rid)
             if found is None or found.values != row.values:
@@ -304,10 +359,15 @@ class SMDriver:
             raise AssertionError("distinct harus dict")
 
     def _create_index_duplicate(self, sm: StorageManager) -> None:
-        schema = sm.get_schema("student")
-        column = schema.columns[0].name
+        table = "student"
+        schema = sm.get_schema(table)
+        indexed = {info.column for info in sm.list_indexes(table)}
+        column = next(
+            (item.name for item in schema.columns if item.name not in indexed),
+            schema.columns[0].name,
+        )
         name = f"idx_driver_{uuid.uuid4().hex}"
-        info = IndexInfo(name=name, table="student", column=column)
+        info = IndexInfo(name=name, table=table, column=column)
         sm.create_index(info)
         try:
             sm.create_index(info)
@@ -317,7 +377,7 @@ class SMDriver:
             raise AssertionError("index dengan nama ganda harus ditolak")
         try:
             sm.create_index(
-                IndexInfo(name=f"{name}_bad", table="student", column="__missing__")
+                IndexInfo(name=f"{name}_bad", table=table, column="__missing__")
             )
         except MdbmsError:
             pass
@@ -329,6 +389,7 @@ class SMDriver:
         row = self._first_row(sm, table)
         schema = sm.get_schema(table)
         column = schema.columns[0].name
+        self._ensure_index(sm, table, column)
         position = schema.column_index(column)
         key = row.values[position]
         rids = sm.index_lookup(table, column, key)
@@ -344,6 +405,7 @@ class SMDriver:
         rows = self._rows(sm, table)
         schema = sm.get_schema(table)
         column = schema.columns[0].name
+        self._ensure_index(sm, table, column)
         position = schema.column_index(column)
         values = sorted(
             row.values[position]
@@ -387,6 +449,7 @@ class SMDriver:
         sm.flush()
         if not calls or max(calls) < 7:
             raise AssertionError("flush tidak memanggil log flusher dengan page_lsn")
+        self._insert_fresh(sm, "student", 8)
         sm.set_log_flusher(lambda _lsn: False)
         try:
             sm.flush()
@@ -395,6 +458,7 @@ class SMDriver:
         else:
             raise AssertionError("flush harus gagal jika log belum permanen")
         sm.set_log_flusher(lambda _lsn: True)
+        sm.flush()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -419,6 +483,7 @@ def main(argv: list[str] | None = None) -> int:
             tmp_dir = tempfile.TemporaryDirectory(prefix="coachdb-sm-")
             data_dir = tmp_dir.name
         sm = RealStorageManager(data_dir)
+        _seed_sample(sm)
 
     driver = SMDriver(sm=sm, data_dir=args.data_dir)
     try:
@@ -431,6 +496,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if passed else 1
     finally:
         driver.close()
+        if sm is not None:
+            sm.close()
         if tmp_dir is not None:
             tmp_dir.cleanup()
 
