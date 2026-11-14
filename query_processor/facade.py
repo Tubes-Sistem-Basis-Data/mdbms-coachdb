@@ -156,9 +156,34 @@ class QueryProcessorFacade(QueryProcessor):
         self._meta = meta or MetaCommandHandler(qo=qo, frm=frm, ccm=ccm)
         self._sessions = sessions or SessionManager()
         self._formatter = ResultFormatter()
+        self._closing = False
+        self._storage_closed = False
+        self._closed = False
 
     def open_session(self) -> Session:
+        if self._closing:
+            raise MdbmsError("Query Processor sudah ditutup")
         return self._sessions.open_session()
+
+    def close(self) -> None:
+        """Tutup runtime setelah seluruh request server berhenti."""
+        if self._closed:
+            return
+        self._closing = True
+        for session in self._sessions.active_sessions():
+            self.close_session(session.session_id)
+        if self._sessions.active_sessions():
+            raise MdbmsError("Transaksi belum selesai; runtime belum boleh ditutup")
+        if not self._storage_closed:
+            self._sm.flush()
+            close_storage = getattr(self._sm, "close", None)
+            if callable(close_storage):
+                close_storage()
+            self._storage_closed = True
+        close_recovery = getattr(self._frm, "close", None)
+        if callable(close_recovery):
+            close_recovery()
+        self._closed = True
 
     def close_session(self, session_id: int) -> None:
         session = self._sessions.get_session(session_id)
@@ -174,6 +199,8 @@ class QueryProcessorFacade(QueryProcessor):
         self._sessions.close_session(session_id)
 
     def execute_query(self, sql: str, session: Session) -> ExecutionResult:
+        if self._closing:
+            return ExecutionResult(ok=False, message="ERROR: Query Processor sudah ditutup")
         if session is not None:
             self._sessions.register_session(session)
             allow_abort = isinstance(sql, str) and sql.strip().rstrip(";").strip().upper() == "ABORT"

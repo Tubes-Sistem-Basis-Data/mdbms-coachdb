@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import suppress
+from pathlib import Path
 import sys
 
 from client import ClientCLI
@@ -50,22 +52,35 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def bootstrap(args: argparse.Namespace) -> QueryProcessor:
     sm = StorageManager(args.data_dir)
-    frm = FailureRecoveryManager()
-    ccm = CCManager(frm)
-    frm.set_dependencies(sm, ccm)
-    sm.set_log_flusher(frm.flush_log)
+    frm = None
+    try:
+        frm = FailureRecoveryManager(log_path=str(Path(args.data_dir) / "wal.log"))
+        ccm = CCManager(frm)
+        frm.set_dependencies(sm, ccm)
+        sm.set_log_flusher(frm.flush_log)
 
-    result = frm.recover()
-    if not result.ok:
-        print(f"error: recovery gagal: {result.message}", file=sys.stderr)
-        sys.exit(1)
+        result = frm.recover()
+        if not result.ok:
+            print(f"error: recovery gagal: {result.message}", file=sys.stderr)
+            sys.exit(1)
 
-    ccm.set_protocol(PROTOCOLS[args.protocol])
-    print(f"Protokol aktif: {ccm.get_protocol().value}")
-    ccm.initialize(result.last_tx_id)
+        ccm.set_protocol(PROTOCOLS[args.protocol])
+        ccm.initialize(result.last_tx_id)
+        print(f"Protokol aktif: {ccm.get_protocol().value}")
+        return QueryProcessorFacade(QueryOptimizerFacade(sm), sm, ccm, frm)
+    except BaseException:
+        with suppress(Exception):
+            sm.close()
+        if frm is not None:
+            with suppress(Exception):
+                frm.close()
+        raise
 
-    qo = QueryOptimizerFacade(sm)
-    return QueryProcessorFacade(qo, sm, ccm, frm)
+
+def close_runtime(qp: QueryProcessor) -> None:
+    close = getattr(qp, "close", None)
+    if callable(close):
+        close()
 
 
 def print_result(sql: str, result: ExecutionResult) -> None:
@@ -85,19 +100,25 @@ def run_demo(qp: QueryProcessor) -> None:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     qp = bootstrap(args)
-    if args.demo:
-        run_demo(qp)
-    elif args.cli:
-        ClientCLI(qp=qp).run()
-    elif args.serve:
-        server = QueryServer(qp, host=args.host, port=args.port)
-        print(f"Server CoachDB mendengarkan di {args.host}:{server.port}")
-        try:
+    server = None
+    try:
+        if args.demo:
+            run_demo(qp)
+        elif args.cli:
+            ClientCLI(qp=qp).run()
+        elif args.serve:
+            server = QueryServer(qp, host=args.host, port=args.port)
+            print(f"Server CoachDB mendengarkan di {args.host}:{server.port}")
             server.serve()
-        except KeyboardInterrupt:
+        else:
+            print("Bootstrap selesai. Gunakan --demo, --cli, atau --serve.")
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if server is not None:
             server.shutdown()
-    else:
-        print("Bootstrap selesai. Gunakan --demo, --cli, atau --serve.")
+            server.wait_closed()
+        close_runtime(qp)
 
 
 if __name__ == "__main__":

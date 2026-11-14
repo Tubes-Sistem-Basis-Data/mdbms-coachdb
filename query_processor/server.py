@@ -6,11 +6,13 @@ import socket
 import threading
 from contextlib import suppress
 from queue import Queue
+from time import monotonic
 
 from common import config
 from common.interfaces import QueryProcessor, Session
 from common.result import ExecutionResult
 from query_processor.cancellation import cancellation_scope
+from query_processor.errors import ExecutionError
 
 logger = logging.getLogger("coachdb.qp")
 
@@ -199,3 +201,12 @@ class QueryServer:
             cancelled.set()
             with suppress(OSError):
                 conn.shutdown(socket.SHUT_RDWR)
+
+    def wait_closed(self, timeout: float = 5.0) -> None:
+        """Tunggu handler selesai sebelum backend ditutup."""
+        deadline = monotonic() + timeout
+        threads = [thread for thread in self._client_threads if thread is not threading.current_thread()]
+        for thread in threads:
+            thread.join(timeout=max(0.0, deadline - monotonic()))
+        if any(thread.is_alive() for thread in threads):
+            raise ExecutionError("Handler client belum selesai; backend belum boleh ditutup")
