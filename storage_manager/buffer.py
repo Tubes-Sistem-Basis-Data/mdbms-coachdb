@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 import threading
 from collections import OrderedDict
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Iterator
 
 from common import config
 from common.errors import StorageError
@@ -14,6 +15,15 @@ from common.errors import StorageError
 __all__ = ["BufferPool", "Frame"]
 
 logger = logging.getLogger("coachdb.sm")
+
+
+@contextmanager
+def _disk_io() -> Iterator[None]:
+    """Ubah error mentah DiskManager (KeyError, ValueError, OSError) jadi StorageError."""
+    try:
+        yield
+    except (KeyError, ValueError, OSError) as exc:
+        raise StorageError(f"I/O disk gagal: {exc}") from exc
 
 
 def _slotted_page():
@@ -68,7 +78,8 @@ class BufferPool:
                 frame.pin_count += 1
                 return frame
             self._make_room()
-            data = self._disk.read_page(table, page_id)
+            with _disk_io():
+                data = self._disk.read_page(table, page_id)
             frame = Frame(table, page_id, data, pin_count=1)
             self._frames[key] = frame
             return frame
@@ -77,9 +88,11 @@ class BufferPool:
         """Bikin page baru di disk, masukin ke buffer, lalu pin."""
         with self._lock:
             self._make_room()
-            page_id = self._disk.num_pages(table)
+            with _disk_io():
+                page_id = self._disk.num_pages(table)
             data = _slotted_page().init_page(page_id, record_size)
-            allocated = self._disk.allocate_page(table, data)
+            with _disk_io():
+                allocated = self._disk.allocate_page(table, data)
             if allocated != page_id:
                 raise StorageError(
                     f"alokasi page {table} tidak sesuai: {allocated} != {page_id}"
@@ -111,7 +124,8 @@ class BufferPool:
             if frame is None or not frame.dirty:
                 return
             self._write_back(frame)
-            self._disk.sync(table)
+            with _disk_io():
+                self._disk.sync(table)
 
     def flush_table(self, table: str) -> None:
         """Write semua page dirty tabel ini ke disk."""
@@ -122,17 +136,20 @@ class BufferPool:
                     self._write_back(frame)
                     wrote = True
             if wrote:
-                self._disk.sync(table)
+                with _disk_io():
+                    self._disk.sync(table)
 
     def flush_all(self) -> None:
-        """Write semua page dirty ke disk."""
+        """Write semua page dirty ke disk lalu fsync (D3).
+
+        sync selalu dipanggil: page yang sudah ditulis lewat penggantian page
+        (_evict) juga belum di-fsync.
+        """
         with self._lock:
-            wrote = False
             for frame in self._frames.values():
                 if frame.dirty:
                     self._write_back(frame)
-                    wrote = True
-            if wrote:
+            with _disk_io():
                 self._disk.sync()
 
     def discard_table(self, table: str) -> None:
@@ -143,6 +160,14 @@ class BufferPool:
                 del self._frames[key]
             if keys:
                 logger.debug("%d frame tabel %s dibuang", len(keys), table)
+
+    def discard_all(self) -> None:
+        """Buang semua frame tanpa write, dipakai restore_from."""
+        with self._lock:
+            count = len(self._frames)
+            self._frames.clear()
+            if count:
+                logger.debug("%d frame dibuang", count)
 
     def _make_room(self) -> None:
         """Keluarkan satu frame kalo buffer udah penuh."""
@@ -167,12 +192,17 @@ class BufferPool:
             return
         self._flush_log_until(frame.page_lsn)
         _slotted_page().seal(frame.data)
-        self._disk.write_page(frame.table, frame.page_id, bytes(frame.data))
+        with _disk_io():
+            self._disk.write_page(frame.table, frame.page_id, bytes(frame.data))
         frame.dirty = False
 
     def _flush_log_until(self, page_lsn: int) -> None:
-        """Minta FRM pastikan log sampai page_lsn udah aman."""
+        """Minta FRM pastikan log sampai page_lsn udah aman.
+
+        Hanya hasil False yang dianggap gagal; None dari flush_log_until dianggap
+        berhasil. Error dari FRM (mis. LogWriteError) diteruskan apa adanya.
+        """
         if self._log_flusher is None:
             return
-        if not self._log_flusher(page_lsn):
+        if self._log_flusher(page_lsn) is False:
             raise StorageError(f"log sampai LSN {page_lsn} belum permanen")
