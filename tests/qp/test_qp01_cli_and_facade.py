@@ -86,6 +86,9 @@ class _StubStorageManager(StorageManager):
     def get_stats(self, table: str) -> TableStats:
         return TableStats(table=table, n_r=2, b_r=1, l_r=32.0, f_r=10, distinct={})
 
+    def list_indexes(self, table: str | None = None) -> list[IndexInfo]:
+        return []
+
     def scan(self, table: str) -> Iterator[Row]:
         return iter(())
 
@@ -128,10 +131,22 @@ class _StubStorageManager(StorageManager):
     def index_range(self, table: str, column: str, low, high) -> list[RID]:
         return []
 
-    def flush(self, page_ids: list[int] | None = None) -> None:
+    def flush(self) -> None:
         return None
 
     def set_log_flusher(self, fn) -> None:
+        return None
+
+    def snapshot_to(self, path: str) -> None:
+        return None
+
+    def restore_from(self, path: str) -> None:
+        return None
+
+    def rebuild_indexes(self) -> None:
+        return None
+
+    def close(self) -> None:
         return None
 
 
