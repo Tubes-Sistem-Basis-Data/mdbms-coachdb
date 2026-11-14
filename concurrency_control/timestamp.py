@@ -28,6 +28,13 @@ class TimestampProtocol(ConcurrencyProtocol):
             if tx_id in state.waiters:
                 state.waiters.remove(tx_id)
 
+    @staticmethod
+    def _wait_dirty(tx: Transaction, resource: ResourceId, state: TableTimestamps) -> AccessResponse:
+        return AccessResponse(
+            AccessStatus.WAIT,
+            message=f"T{tx.tx_id} menunggu T{state.uncommitted_writer} commit/abort pada {resource.table}",
+        )
+
     def request(
         self,
         tx: Transaction,
@@ -46,6 +53,8 @@ class TimestampProtocol(ConcurrencyProtocol):
                         f"pada {resource.table}: READ ditolak (TSO)"
                     ),
                 )
+            if state.uncommitted_writer not in (None, tx.tx_id):
+                return self._wait_dirty(tx, resource, state)
             state.read_ts = max(state.read_ts, ts)
             return AccessResponse(AccessStatus.ALLOWED)
 
@@ -67,6 +76,8 @@ class TimestampProtocol(ConcurrencyProtocol):
                     ),
                 )
 
+            if state.uncommitted_writer not in (None, tx.tx_id):
+                return self._wait_dirty(tx, resource, state)
             state.write_ts = max(state.write_ts, ts)
             state.uncommitted_writer = tx.tx_id
             return AccessResponse(AccessStatus.ALLOWED)
