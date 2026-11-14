@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty, Queue, SimpleQueue
 from time import monotonic
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 from common.config import WAIT_RETRY_SECONDS
 from common.interfaces import ConcurrencyControlManager, FailureRecoveryManager
@@ -28,10 +28,12 @@ from common.transaction import (
     TxStatus,
 )
 from concurrency_control.manager import CCManager
-from concurrency_control.serializability import Operation, Schedule, SerializabilityResult
-
-if TYPE_CHECKING:
-    from concurrency_control.serializability import SerializabilityChecker
+from concurrency_control.serializability import (
+    Operation,
+    Schedule,
+    SerializabilityChecker,
+    SerializabilityResult,
+)
 
 
 SCENARIO_TIMEOUT_SECONDS = 5.0
@@ -450,7 +452,7 @@ class CCMDriver:
                 if stopped.is_set() or remaining() <= 0:
                     raise TimeoutError
                 response = ccm.validate_object(tx_id, resource, action, change)
-                operation = Operation(step.tx_id, action, resource) if response.status is AccessStatus.ALLOWED else None
+                operation = Operation(step.tx_id, action.name, resource.table, resource.rid) if response.status is AccessStatus.ALLOWED else None
                 attempts.put(_Attempt(step, response.status, retry, operation))
             if response.status is not AccessStatus.WAIT:
                 return response.status is AccessStatus.ABORTED
@@ -473,7 +475,7 @@ def main(argv: list[str] | None = None, *, checker: SerializabilityChecker | Non
     args_parser.add_argument("--protocol", choices=_PROTOCOLS, default="lock", help="protokol contoh bawaan")
     args = args_parser.parse_args(argv)
 
-    driver = CCMDriver(checker=checker)
+    driver = CCMDriver(checker=checker or SerializabilityChecker())
     try:
         samples = _TIMESTAMP_SCHEDULES if args.protocol == "timestamp" else _SAMPLE_SCHEDULES
         scenarios = driver.parser.parse(args.file) if args.file else driver.parser.parse_text(samples)
@@ -490,7 +492,7 @@ def main(argv: list[str] | None = None, *, checker: SerializabilityChecker | Non
         expected = ", ".join(status.value for status in scenario.expected) or "-"
         actual = ", ".join(status.value for status in result.statuses) or "-"
         schedule = ", ".join(
-            str(_Step(op.tx_id, "R" if op.action is Action.READ else "W", op.resource.table))
+            str(_Step(op.tx_id, "R" if op.kind == "READ" else "W", op.table))
             for op in result.final_schedule.operations
         )
         print(f"Ekspektasi: {expected}")
