@@ -59,6 +59,24 @@ class TestExplain(unittest.TestCase):
         self.assertIn("SEBELUM (biaya 0 blok)", hasil)
         self.assertEqual(hasil.count("(tidak ada plan)"), 2)
 
+    def test_explain_menampilkan_perbedaan_optimasi_m3_index_dan_join(self) -> None:
+        from tests.qo.test_planner import _PlannerCatalog
+
+        qo = QueryOptimizerFacade(_PlannerCatalog())
+        sql = (
+            "EXPLAIN SELECT student.name, enrollment.grade "
+            "FROM enrollment, student "
+            "WHERE student.id = 7 AND student.id = enrollment.student_id;"
+        )
+        parsed = qo.parse_query(sql)
+        teks = qo.explain(parsed)
+        sebelum, sesudah = teks.split("SESUDAH")
+
+        self.assertIn("Join BNLJ CROSS", sebelum)
+        self.assertIn("TableScan [student]", sebelum)
+        self.assertIn("Join BNLJ THETA", sesudah)
+        self.assertIn("IndexScan [student.idx_student_id: id = 7]", sesudah)
+
 
 if __name__ == "__main__":
     unittest.main()

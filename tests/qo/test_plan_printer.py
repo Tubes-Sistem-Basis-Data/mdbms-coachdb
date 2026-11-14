@@ -92,16 +92,26 @@ class TestLabel(unittest.TestCase):
     def test_index_scan_kesamaan(self) -> None:
         self.check(IndexScan(table="student", index=IDX_ID, op=CompOp.EQ, key=7),
                    "IndexScan [student.idx_id: id = 7]")
+        self.check(IndexScan(table="student", index=IDX_ID, op=CompOp.EQ, key=7, alias="s"),
+                   "IndexScan [student AS s.idx_id: id = 7]")
 
     def test_index_scan_rentang(self) -> None:
         self.check(IndexScan(table="student", index=IDX_ID, op=CompOp.GE, low=1, high=10),
                    "IndexScan [student.idx_id: 1 <= id <= 10]")
+        self.check(IndexScan(table="student", index=IDX_ID, op=CompOp.GT, low=1, high=10),
+                   "IndexScan [student.idx_id: 1 < id <= 10]")
+        self.check(IndexScan(table="student", index=IDX_ID, op=CompOp.LT, low=1, high=10),
+                   "IndexScan [student.idx_id: 1 <= id < 10]")
 
     def test_index_scan_rentang_satu_sisi(self) -> None:
         self.check(IndexScan(table="student", index=IDX_ID, op=CompOp.GE, low=5),
                    "IndexScan [student.idx_id: 5 <= id]")
+        self.check(IndexScan(table="student", index=IDX_ID, op=CompOp.GT, low=5),
+                   "IndexScan [student.idx_id: 5 < id]")
         self.check(IndexScan(table="student", index=IDX_ID, op=CompOp.LE, high=5),
                    "IndexScan [student.idx_id: id <= 5]")
+        self.check(IndexScan(table="student", index=IDX_ID, op=CompOp.LT, high=5),
+                   "IndexScan [student.idx_id: id < 5]")
 
     def test_filter(self) -> None:
         self.check(Filter(condition=Comparison(CompOp.GT, GPA, lit(3.5))), "Filter [student.gpa > 3.5]")
@@ -146,6 +156,7 @@ class TestLabel(unittest.TestCase):
         schema = TableSchema("course", [ColumnSchema("id", DataType.INTEGER)])
         self.check(CreateTable(schema=schema), "CreateTable [course]")
         self.check(DropTable(table="course"), "DropTable [course]")
+        self.check(DropTable(table="course", cascade=True), "DropTable [course CASCADE]")
 
     def test_fallback_tidak_crash(self) -> None:
         self.check(PlanNode(), "PlanNode")

@@ -33,15 +33,18 @@ class PlanPrinter:
             case IndexScan():
                 # low/high inklusif, mengikuti SM.index_range (low <= nilai <= high)
                 kolom = node.index.column
-                awal = f"IndexScan [{node.table}.{node.index.name}: "
+                tabel = node.table if node.alias is None else f"{node.table} AS {node.alias}"
+                awal = f"IndexScan [{tabel}.{node.index.name}: "
                 if node.key is not None:
                     return awal + f"{kolom} {node.op.value} {node.key!r}]"
                 bagian = []
                 if node.low is not None:
-                    bagian.append(f"{node.low!r} <=")
+                    op_kiri = "<" if node.op.value == ">" else "<="
+                    bagian.append(f"{node.low!r} {op_kiri}")
                 bagian.append(kolom)
                 if node.high is not None:
-                    bagian.append(f"<= {node.high!r}")
+                    op_kanan = "<" if node.op.value == "<" else "<="
+                    bagian.append(f"{op_kanan} {node.high!r}")
                 return awal + " ".join(bagian) + "]"
             case Filter():
                 return f"Filter [{self._render_expr(node.condition)}]"
@@ -80,6 +83,8 @@ class PlanPrinter:
             case CreateTable():
                 return f"CreateTable [{node.schema.name}]"
             case DropTable():
+                if node.cascade:
+                    return f"DropTable [{node.table} CASCADE]"
                 return f"DropTable [{node.table}]"
             case _:
                 return type(node).__name__
