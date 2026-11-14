@@ -1,7 +1,9 @@
 from typing import TYPE_CHECKING
 
 from common.expression import ColumnRef
-from common.plan import Filter, Join, JoinKind, ParsedQuery, PlanNode, Project, QueryKind, Sort, TableScan
+from common.plan import (
+    Filter, Join, JoinKind, Limit, ParsedQuery, PlanNode, Project, QueryKind, Sort, SubqueryScan, TableScan,
+)
 from query_optimizer.expression_parser import ExpressionParser
 from query_optimizer.lexer import TokenType
 
@@ -20,15 +22,16 @@ class SelectParser:
     def parse_select(self, tokens: "TokenStream") -> ParsedQuery:
         tokens.expect(T.KEYWORD, "SELECT")
         columns: list[ColumnRef] = []
+        aliases: list[str | None] = []
         if tokens.match(T.OP, "*"):
             tokens.advance()
         elif tokens.match(T.KEYWORD, "FROM"):
             tokens.error("daftar kolom kosong")
         else:
-            columns.append(self._parse_column_ref(tokens))
+            self._parse_select_item(tokens, columns, aliases)
             while tokens.match(T.COMMA):
                 tokens.advance()
-                columns.append(self._parse_column_ref(tokens))
+                self._parse_select_item(tokens, columns, aliases)
 
         tokens.expect(T.KEYWORD, "FROM")
         node = self._parse_from(tokens)
@@ -43,8 +46,25 @@ class SelectParser:
             tokens.expect(T.KEYWORD, "BY")
             node = self._parse_order_by(tokens, node)
 
-        plan = Project(columns=columns, children=[node])
+        # aliases dikosongkan jika tidak ada satu pun kolom yang memakai AS
+        if all(alias is None for alias in aliases):
+            aliases = []
+        plan: PlanNode = Project(columns=columns, aliases=aliases, children=[node])
+
+        if tokens.match(T.KEYWORD, "LIMIT"):
+            tokens.advance()
+            count = tokens.expect(T.INTEGER).value
+            plan = Limit(count=count, children=[plan])
         return ParsedQuery(sql="", kind=QueryKind.SELECT, plan=plan)
+
+    def _parse_select_item(self, tokens: "TokenStream", columns: list[ColumnRef], aliases: list[str | None]) -> None:
+        """Satu kolom di daftar SELECT, dengan `AS <alias>` opsional."""
+        columns.append(self._parse_column_ref(tokens))
+        alias = None
+        if tokens.match(T.KEYWORD, "AS"):
+            tokens.advance()
+            alias = tokens.expect(T.IDENT).value
+        aliases.append(alias)
 
     def _parse_column_ref(self, tokens: "TokenStream") -> ColumnRef:
         pertama = tokens.expect(T.IDENT).value
@@ -79,8 +99,28 @@ class SelectParser:
             else:
                 return left
 
-    def _parse_table(self, tokens: "TokenStream") -> TableScan:
-        return TableScan(table=tokens.expect(T.IDENT).value)
+    def _parse_table(self, tokens: "TokenStream") -> PlanNode:
+        """Nama tabel atau `(SELECT ...)`, keduanya boleh diikuti `[AS] <alias>`."""
+        if tokens.match(T.LPAREN):
+            tokens.advance()
+            if not tokens.match(T.KEYWORD, "SELECT"):
+                tokens.error("diharapkan SELECT di dalam subquery")
+            inner = self.parse_select(tokens).plan
+            tokens.expect(T.RPAREN, ")")
+            alias = self._parse_alias(tokens)
+            if alias is None:
+                tokens.error("subquery di FROM wajib memakai alias")
+            return SubqueryScan(alias=alias, children=[inner])
+        table = tokens.expect(T.IDENT).value
+        return TableScan(table=table, alias=self._parse_alias(tokens))
+
+    def _parse_alias(self, tokens: "TokenStream") -> str | None:
+        if tokens.match(T.KEYWORD, "AS"):
+            tokens.advance()
+            return tokens.expect(T.IDENT).value
+        if tokens.match(T.IDENT):
+            return tokens.advance().value
+        return None
 
     def _parse_order_by(self, tokens: "TokenStream", child: PlanNode) -> Sort:
         col = self._parse_column_ref(tokens)
@@ -92,5 +132,3 @@ class SelectParser:
             tokens.advance()
         return Sort(column=col, ascending=ascending, children=[child])
 
-    def _parse_limit_alias(self, tokens: "TokenStream") -> PlanNode:
-        return PlanNode()

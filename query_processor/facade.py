@@ -23,6 +23,7 @@ from common.plan import ParsedQuery, QueryKind, TransactionCommand
 from common.result import ExecutionResult
 from common.transaction import Action
 from query_processor.context import ExecContext
+from query_processor.errors import PlanError
 from query_processor.result import ResultFormatter
 from query_processor.session import SessionManager
 from query_processor.transactions import TransactionCoordinator
@@ -155,18 +156,57 @@ class QueryProcessorFacade(QueryProcessor):
         self._meta = meta or MetaCommandHandler(qo=qo, frm=frm, ccm=ccm)
         self._sessions = sessions or SessionManager()
         self._formatter = ResultFormatter()
+        self._closing = False
+        self._storage_closed = False
+        self._closed = False
 
     def open_session(self) -> Session:
+        if self._closing:
+            raise MdbmsError("Query Processor sudah ditutup")
         return self._sessions.open_session()
 
+    def close(self) -> None:
+        """Tutup runtime setelah seluruh request server berhenti."""
+        if self._closed:
+            return
+        self._closing = True
+        for session in self._sessions.active_sessions():
+            self.close_session(session.session_id)
+        if self._sessions.active_sessions():
+            raise MdbmsError("Transaksi belum selesai; runtime belum boleh ditutup")
+        if not self._storage_closed:
+            self._sm.flush()
+            close_storage = getattr(self._sm, "close", None)
+            if callable(close_storage):
+                close_storage()
+            self._storage_closed = True
+        close_recovery = getattr(self._frm, "close", None)
+        if callable(close_recovery):
+            close_recovery()
+        self._closed = True
+
     def close_session(self, session_id: int) -> None:
-        session = self._sessions.close_session(session_id)
+        session = self._sessions.get_session(session_id)
         if session is not None and (session.tx_id is not None or session.in_explicit_tx):
-            self._abort_active_tx(session, is_disconnect=True)
+            tx_id = session.tx_id
+            try:
+                self._transactions.abort_on_disconnect(session)
+            except Exception:
+                logger.exception(
+                    "Gagal membatalkan transaksi aktif %s pada sesi %s", tx_id, session_id
+                )
+                return
+        self._sessions.close_session(session_id)
 
     def execute_query(self, sql: str, session: Session) -> ExecutionResult:
+        if self._closing:
+            return ExecutionResult(ok=False, message="ERROR: Query Processor sudah ditutup")
         if session is not None:
             self._sessions.register_session(session)
+            allow_abort = isinstance(sql, str) and sql.strip().rstrip(";").strip().upper() == "ABORT"
+            blocked = self._transactions.blocked_result(session, allow_abort=allow_abort)
+            if blocked is not None:
+                return blocked
 
         if not isinstance(sql, str):
             return ExecutionResult(ok=False, message="ERROR [SYNTAX]: Query harus berupa string")
@@ -193,20 +233,14 @@ class QueryProcessorFacade(QueryProcessor):
         except (QuerySyntaxError, SemanticError) as exc:
             return ExecutionResult(ok=False, message=self._formatter.format_error(exc))
         except TransactionAbortedError as exc:
-            if session is not None:
-                session.tx_id = None
-                session.in_explicit_tx = False
-            return ExecutionResult(ok=False, message=self._formatter.format_error(exc))
+            return self._runtime_error_result(session, exc)
         except MdbmsError as exc:
-            if exc.__class__.__name__ != "PlanError" and session is not None:
-                if session.tx_id is not None or session.in_explicit_tx:
-                    self._abort_active_tx(session)
-            return ExecutionResult(ok=False, message=self._formatter.format_error(exc))
+            if isinstance(exc, PlanError):
+                return ExecutionResult(ok=False, message=self._formatter.format_error(exc))
+            return self._runtime_error_result(session, exc)
         except Exception as exc:
             logger.exception("Kesalahan internal saat mengeksekusi query: %s", sql)
-            if session is not None and (session.tx_id is not None or session.in_explicit_tx):
-                self._abort_active_tx(session)
-            return ExecutionResult(ok=False, message=self._formatter.format_error(exc))
+            return self._runtime_error_result(session, exc)
 
     def execute(self, session: Session, sql: str) -> ExecutionResult:
         return self.execute_query(sql, session)
@@ -295,56 +329,11 @@ class QueryProcessorFacade(QueryProcessor):
         session: Session,
     ) -> ExecutionResult:
         if command == TransactionCommand.BEGIN:
-            if session.in_explicit_tx or session.tx_id is not None:
-                return ExecutionResult(
-                    ok=False,
-                    message=f"ERROR [TX]: Transaksi {session.tx_id} sudah aktif pada sesi ini",
-                )
-            coord_res = self._transactions.begin(session)
-            if coord_res.ok or coord_res.message:
-                return coord_res
-
-            tx_id = self._ccm.begin_transaction()
-            session.tx_id = tx_id
-            session.in_explicit_tx = True
-            return ExecutionResult(ok=True, message=f"BEGIN (tx {tx_id})")
-
+            return self._transactions.begin(session)
         if command == TransactionCommand.COMMIT:
-            if not session.in_explicit_tx or session.tx_id is None:
-                return ExecutionResult(
-                    ok=False,
-                    message="ERROR [TX]: Tidak ada transaksi aktif untuk di-COMMIT",
-                )
-            coord_res = self._transactions.commit(session)
-            if coord_res.ok or coord_res.message:
-                return coord_res
-
-            tx_id = session.tx_id
-            tx_result = self._ccm.commit(tx_id)
-            session.tx_id = None
-            session.in_explicit_tx = False
-            if not tx_result.ok:
-                return ExecutionResult(
-                    ok=False,
-                    message=tx_result.message or f"ERROR [TX]: Gagal melakukan COMMIT untuk tx {tx_id}",
-                )
-            return ExecutionResult(ok=True, message=tx_result.message or f"COMMIT (tx {tx_id})")
-
+            return self._transactions.commit(session)
         if command == TransactionCommand.ABORT:
-            if not session.in_explicit_tx or session.tx_id is None:
-                return ExecutionResult(
-                    ok=False,
-                    message="ERROR [TX]: Tidak ada transaksi aktif untuk di-ABORT",
-                )
-            coord_res = self._transactions.abort(session)
-            if coord_res.ok or coord_res.message:
-                return coord_res
-
-            tx_id = session.tx_id
-            tx_result = self._ccm.abort(tx_id)
-            session.tx_id = None
-            session.in_explicit_tx = False
-            return ExecutionResult(ok=True, message=tx_result.message or f"ABORT (tx {tx_id})")
+            return self._transactions.abort(session)
 
         return ExecutionResult(ok=False, message="ERROR [TX]: Perintah transaksi tidak dikenal")
 
@@ -378,8 +367,10 @@ class QueryProcessorFacade(QueryProcessor):
                 ccm=self._ccm,
                 access_intent=intent,
             )
+            ctx.check_cancelled()
             executable = self._translator.build(optimized, ctx)
             res = executable.execute(ctx)
+            ctx.check_cancelled()
             if res.ok and not res.message:
                 res.message = self._default_success_message(optimized.kind, res.affected_rows)
             return res
@@ -392,44 +383,7 @@ class QueryProcessorFacade(QueryProcessor):
                 return ExecutionResult(ok=False, message="ERROR: Eksekusi operator belum diimplementasikan")
             return res
 
-        invoked = False
-
-        def _tracked_work(tx_id: int) -> ExecutionResult:
-            nonlocal invoked
-            invoked = True
-            return _work(tx_id)
-
-        coord_res = self._transactions.run_autocommit(session, _tracked_work)
-        if invoked or coord_res.ok or coord_res.message:
-            return coord_res
-
-        tx_id = self._ccm.begin_transaction()
-        session.tx_id = tx_id
-        session.in_explicit_tx = False
-        try:
-            res = _work(tx_id)
-        except Exception:
-            self._abort_active_tx(session)
-            raise
-
-        if not res.ok:
-            self._ccm.abort(tx_id)
-            session.tx_id = None
-            session.in_explicit_tx = False
-            return ExecutionResult(
-                ok=False,
-                message=res.message or "ERROR: Eksekusi operator belum diimplementasikan",
-            )
-
-        commit_res = self._ccm.commit(tx_id)
-        session.tx_id = None
-        session.in_explicit_tx = False
-        if not commit_res.ok:
-            return ExecutionResult(
-                ok=False,
-                message=commit_res.message or f"ERROR [TX]: Gagal commit transaksi {tx_id}",
-            )
-        return res
+        return self._transactions.run_autocommit(session, _work)
 
     @staticmethod
     def _default_success_message(kind: QueryKind, affected_rows: int) -> str:
@@ -443,17 +397,11 @@ class QueryProcessorFacade(QueryProcessor):
             return "Index berhasil dibuat"
         return ""
 
-    def _abort_active_tx(self, session: Session, is_disconnect: bool = False) -> None:
-        tx_id = session.tx_id
+    def _runtime_error_result(self, session: Session, error: Exception) -> ExecutionResult:
+        result = ExecutionResult(ok=False, message=self._formatter.format_error(error))
         try:
-            if is_disconnect:
-                self._transactions.abort_on_disconnect(session)
-            if session.tx_id is not None:
-                self._ccm.abort(session.tx_id)
-            elif tx_id is not None:
-                self._ccm.abort(tx_id)
-        except Exception:
-            logger.exception("Gagal membatalkan transaksi aktif %s pada sesi %s", tx_id, session.session_id)
-        finally:
-            session.tx_id = None
-            session.in_explicit_tx = False
+            if session is not None:
+                self._transactions.handle_runtime_error(session, error)
+        except Exception as cleanup_error:
+            result.message += f"; cleanup gagal: {cleanup_error}"
+        return result

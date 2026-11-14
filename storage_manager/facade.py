@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import shutil
 import threading
 from typing import Callable, Iterator
 
 from common import config
 from common.catalog import IndexInfo, TableSchema, TableStats
+from common.errors import IndexDefinitionError, StorageError
 from common.interfaces import StorageManager as StorageManagerBase
 from common.storage import RID, Row
 from storage_manager.buffer import BufferPool
@@ -30,6 +32,8 @@ class StorageManager(StorageManagerBase):
         buffer_frames: int = config.BUFFER_FRAMES,
     ) -> None:
         self._lock = threading.RLock()
+        self._data_dir = data_dir
+        self._closed = False
         self._disk = DiskManager(data_dir)
         self._buffer = BufferPool(self._disk, buffer_frames)
         self._catalog = Catalog(os.path.join(data_dir, CATALOG_FILE))
@@ -39,6 +43,7 @@ class StorageManager(StorageManagerBase):
             self._lock, self._buffer, self._catalog, self._index_manager, self._stats
         )
         self._log_flusher: Callable[[int], bool] | None = None
+        self._index_manager.rebuild_all()
 
     # Kontrak StorageManager
 
@@ -103,19 +108,42 @@ class StorageManager(StorageManagerBase):
 
     def create_index(self, info: IndexInfo) -> None:
         """Bangun index dan catat di katalog. Dipanggil QP."""
-        return None
+        with self._lock:
+            self._index_manager.create_index(
+                info.name, info.table, info.column, info.kind
+            )
 
     def index_lookup(self, table: str, column: str, key: Value) -> list[RID]:
         """RID dengan nilai kolom sama dengan `key`. Dipanggil QP."""
-        return []
+        with self._lock:
+            info = self._find_index(table, column)
+            return self._index_manager.lookup(info.name, key)
 
     def index_range(self, table: str, column: str, low: Value, high: Value) -> list[RID]:
         """RID dengan low <= nilai <= high, None berarti tak terbatas. Dipanggil QP."""
-        return []
+        with self._lock:
+            info = self._find_index(table, column)
+            return self._index_manager.range(info.name, low, high)
 
-    def flush(self, page_ids: list[int] | None = None) -> None:
-        """Tulis page dirty ke disk, semua page jika `page_ids` None. Dipanggil FRM."""
-        return None
+    def _find_index(self, table: str, column: str) -> IndexInfo:
+        schema = self._catalog.get_table_schema(table)
+        if column not in schema.column_names():
+            raise IndexDefinitionError(
+                f"Kolom {column} tidak ada di tabel {table}"
+            )
+        for info in schema.indexes:
+            if info.column == column:
+                return info
+        raise IndexDefinitionError(f"Index untuk {table}.{column} tidak ditemukan")
+
+    def flush(self) -> None:
+        """Tulis page dirty ke disk. Dipanggil FRM sebelum checkpoint."""
+        with self._lock:
+            if self._closed:
+                return
+            self._buffer.flush_all()
+            self._disk.sync()
+            self._catalog._persist()
 
     def set_log_flusher(self, fn: Callable[[int], bool]) -> None:
         """Pasang callback flush_log dari FRM ke buffer pool. Dipanggil main.py."""
@@ -146,12 +174,51 @@ class StorageManager(StorageManagerBase):
 
     def snapshot_to(self, path: str) -> None:
         """Salin seluruh data ke `path` (checkpoint, PITR)."""
-        return None
+        with self._lock:
+            self.flush()
+            target = os.path.abspath(path)
+            temporary = target + ".tmp"
+            if os.path.isdir(temporary):
+                shutil.rmtree(temporary)
+            os.makedirs(temporary)
+            try:
+                for name in os.listdir(self._data_dir):
+                    if name.endswith(".db") or name == CATALOG_FILE:
+                        shutil.copy2(os.path.join(self._data_dir, name), temporary)
+                if os.path.isdir(target):
+                    shutil.rmtree(target)
+                os.replace(temporary, target)
+            finally:
+                if os.path.isdir(temporary):
+                    shutil.rmtree(temporary, ignore_errors=True)
 
     def restore_from(self, path: str) -> None:
         """Ganti seluruh data dengan snapshot di `path` (PITR)."""
-        return None
+        with self._lock:
+            source = os.path.abspath(path)
+            if not os.path.isdir(source):
+                raise StorageError(f"Snapshot tidak ditemukan: {path}")
+            for table in {key[0] for key in self._buffer._frames}:
+                self._buffer.discard_table(table)
+            self._records._reserved.clear()
+            self._disk.close()
+            for name in os.listdir(self._data_dir):
+                if name.endswith(".db") or name == CATALOG_FILE:
+                    os.unlink(os.path.join(self._data_dir, name))
+            for name in os.listdir(source):
+                if name.endswith(".db") or name == CATALOG_FILE:
+                    shutil.copy2(os.path.join(source, name), self._data_dir)
+            self._disk = DiskManager(self._data_dir)
+            self._buffer._disk = self._disk
+            self._catalog._load()
+            self._closed = False
+            self.rebuild_indexes()
 
     def close(self) -> None:
-        """Flush dan tutup semua file."""
-        return None
+        """Flush dan tutup semua file. Aman dipanggil dua kali."""
+        with self._lock:
+            if self._closed:
+                return
+            self.flush()
+            self._disk.close()
+            self._closed = True

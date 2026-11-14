@@ -10,10 +10,12 @@ from query_processor.tuple import ExecRow
 class FilterOp(RowOperator):
     """Meloloskan baris yang memenuhi filter"""
 
-    def __init__(self, child: RowOperator, condition: Expression) -> None:
+    def __init__(
+        self, child: RowOperator, condition: Expression, evaluator: ExpressionEvaluator | None = None,
+    ) -> None:
         self._child = child
         self._condition = condition
-        self._evaluator = ExpressionEvaluator()
+        self._evaluator = evaluator if evaluator is not None else ExpressionEvaluator()
         self.schema = child.schema
 
     def open(self, ctx: ExecContext) -> None:

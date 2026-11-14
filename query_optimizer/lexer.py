@@ -24,7 +24,8 @@ class TokenType(Enum):
 KEYWORDS: frozenset[str] = frozenset({
     "SELECT", "FROM", "WHERE", "ORDER", "BY", "ASC", "DESC", "JOIN", "ON", "NATURAL", "AND", "UPDATE", "SET", "INSERT",
     "INTO", "VALUES", "DELETE", "BEGIN", "TRANSACTION", "COMMIT", "ABORT", "CREATE", "INDEX", "USING", "BTREE",
-    "HASH", "EXPLAIN", "LIMIT", "AS",
+    "HASH", "EXPLAIN", "LIMIT", "AS", "TABLE", "DROP", "CASCADE", "RESTRICT", "PRIMARY", "KEY", "FOREIGN",
+    "REFERENCES",
 })
 
 # tanda baca satu karakter dan tipe tokennya

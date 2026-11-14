@@ -7,9 +7,10 @@ from math import isfinite
 from common.catalog import DataType
 from common.errors import SemanticError
 from common.expression import (
-    And, ArithOp, BinaryOp, ColumnRef, Comparison, CompOp, Expression, Literal,
+    And, ArithOp, BinaryOp, ColumnRef, Comparison, CompOp, Expression, Literal, Subquery,
 )
 from query_processor.errors import ExecutionError, PlanError
+from query_processor.subqueries import ScalarResolver
 from query_processor.tuple import ExecRow, OutputSchema, Value
 
 
@@ -42,6 +43,9 @@ class _Evaluated:
 class ExpressionEvaluator:
     """Evaluasi pohon ekspresi terhadap satu baris."""
 
+    def __init__(self, scalar_resolver: ScalarResolver | None = None) -> None:
+        self._scalar_resolver = scalar_resolver
+
     def eval(self, expr: Expression, row: ExecRow) -> Value | bool:
         if (
             not isinstance(row, ExecRow)
@@ -70,6 +74,13 @@ class ExpressionEvaluator:
             if isinstance(expr, ColumnRef):
                 position = row.schema.index_of(expr)
                 return self._typed(row.values[position], row.schema.columns[position].type)
+            if isinstance(expr, Subquery):
+                if self._scalar_resolver is None:
+                    raise ExecutionError("Resolver subquery skalar belum tersedia")
+                result = self._scalar_resolver(expr)
+                if not isinstance(result, tuple) or len(result) != 2:
+                    raise ExecutionError("Hasil resolver subquery skalar tidak valid")
+                return self._typed(*result)
             if isinstance(expr, And):
                 if not isinstance(expr.conditions, list) or not expr.conditions:
                     raise PlanError("AND harus berisi kondisi")

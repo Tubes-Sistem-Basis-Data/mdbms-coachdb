@@ -193,8 +193,11 @@ class CCManager(ConcurrencyControlManager):
         return LockManager()
 
     def initialize(self, last_tx_id: int) -> None:
-        # set counter tx_id dari hasil recovery, tx berikutnya last_tx_id + 1 (PIC CC3)
-        return None
+        if last_tx_id < 0:
+            raise ValueError(f"last_tx_id tidak boleh negatif: {last_tx_id}")
+        with self._mutex:
+            self._last_tx_id = max(self._last_tx_id, last_tx_id)
+            self._next_ts = max(self._next_ts, last_tx_id)
 
     def pause_new_transactions(self) -> None:
         with self._mutex:

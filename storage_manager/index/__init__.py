@@ -1,3 +1,4 @@
+from storage_manager.index.base import Index, Key
 from storage_manager.index.bplus_tree import (
     BPlusNode,
     BPlusTree,
@@ -5,7 +6,7 @@ from storage_manager.index.bplus_tree import (
     LeafNode,
 )
 from storage_manager.index.hash_index import HashIndex
-from storage_manager.index.manager import Index, IndexManager
+from storage_manager.index.manager import IndexManager
 
 __all__ = [
     "Index",
@@ -15,4 +16,5 @@ __all__ = [
     "InternalNode",
     "LeafNode",
     "HashIndex",
+    "Key",
 ]
