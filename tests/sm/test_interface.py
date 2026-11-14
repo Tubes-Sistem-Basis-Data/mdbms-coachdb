@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 import tempfile
 import unittest
 
@@ -18,6 +19,7 @@ class TestStorageManagerContract(unittest.TestCase):
         self.sm._catalog.create_table("student", (ColumnSchema("id", DataType.INTEGER),), ("id",), ())
 
     def tearDown(self):
+        self.sm.close()
         self._tmp.cleanup()
 
     def test_subclass_kontrak(self):
@@ -49,7 +51,28 @@ class TestStorageManagerContract(unittest.TestCase):
         self.assertIsNone(sm.create_index(IndexInfo("idx", "student", "id")))
         self.assertIsInstance(sm.index_lookup("student", "id", 1), list)
         self.assertIsInstance(sm.index_range("student", "id", None, 10), list)
+        self.assertIsInstance(sm.list_indexes("student"), list)
         self.assertIsNone(sm.flush())
+        self.assertIsNone(sm.rebuild_indexes())
+
+    def test_flush_menulis_page_dirty(self):
+        self.sm.bulk_load("student", [[1]])
+        self.sm.flush()
+        self.assertEqual(self.sm._disk.num_pages("student"), 1)
+        self.assertFalse(any(frame.dirty for frame in self.sm._buffer._frames.values()))
+
+    def test_snapshot_lalu_restore(self):
+        self.sm.bulk_load("student", [[1], [2]])
+        snapshot = os.path.join(self._tmp.name, "snap")
+        self.sm.snapshot_to(snapshot)
+        self.sm.bulk_load("student", [[3]])
+        self.assertEqual([row.values for row in self.sm.scan("student")], [[1], [2], [3]])
+        self.sm.restore_from(snapshot)
+        self.assertEqual([row.values for row in self.sm.scan("student")], [[1], [2]])
+
+    def test_close_idempoten(self):
+        self.sm.close()
+        self.assertIsNone(self.sm.close())
 
     def test_set_log_flusher_diteruskan_ke_buffer(self):
         def flusher(lsn: int) -> bool:
