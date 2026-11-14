@@ -7,7 +7,7 @@ from typing import Callable
 from common.errors import MdbmsError, TransactionAbortedError
 from common.interfaces import ConcurrencyControlManager, Session
 from common.result import ExecutionResult
-from common.transaction import TxStatus
+from common.transaction import TxResult, TxStatus
 from query_processor.result import ResultFormatter
 
 
@@ -20,11 +20,13 @@ class TransactionCoordinator:
     def __init__(self, ccm: ConcurrencyControlManager) -> None:
         self._ccm = ccm
         self._uncertain_tx_ids: set[int] = set()
+        self._pending_abort_tx_ids: set[int] = set()
         self._state_lock = Lock()
 
-    def blocked_result(self, session: Session) -> ExecutionResult | None:
+    def blocked_result(self, session: Session, *, allow_abort: bool = False) -> ExecutionResult | None:
         with self._state_lock:
             uncertain = session.tx_id in self._uncertain_tx_ids
+            pending_abort = session.tx_id in self._pending_abort_tx_ids
         if uncertain:
             return ExecutionResult(
                 ok=False,
@@ -32,6 +34,14 @@ class TransactionCoordinator:
                     f"ERROR [TX]: Status commit transaksi {session.tx_id} belum pasti. "
                     "Sesi tidak dapat menjalankan perintah lanjutan; "
                     "status transaksi harus diselesaikan melalui recovery sistem."
+                ),
+            )
+        if pending_abort and not allow_abort:
+            return ExecutionResult(
+                ok=False,
+                message=(
+                    f"ERROR [TX]: Rollback transaksi {session.tx_id} belum selesai. "
+                    "Jalankan ABORT untuk mencoba ulang sebelum menjalankan perintah lain."
                 ),
             )
         return None
@@ -121,7 +131,7 @@ class TransactionCoordinator:
                 raise MdbmsError(result.message) from error
 
     def _finish(self, session: Session, commit: bool) -> ExecutionResult:
-        blocked = self.blocked_result(session)
+        blocked = self.blocked_result(session, allow_abort=not commit)
         if blocked is not None:
             return blocked
         command = "COMMIT" if commit else "ABORT"
@@ -140,6 +150,8 @@ class TransactionCoordinator:
                     self._uncertain_tx_ids.add(tx_id)
                 result = self._ccm.commit(tx_id)
             else:
+                with self._state_lock:
+                    self._pending_abort_tx_ids.add(tx_id)
                 result = self._ccm.abort(tx_id)
                 
         except TransactionAbortedError as error:
@@ -151,6 +163,8 @@ class TransactionCoordinator:
         except Exception as error:
             return self._error(error)
 
+        if not isinstance(result, TxResult) or not isinstance(result.status, TxStatus):
+            return ExecutionResult(ok=False, message="ERROR [TX]: Respons penyelesaian CCM tidak valid")
         if result.tx_id != tx_id:
             return ExecutionResult(ok=False, message="ERROR [TX]: CCM mengembalikan tx_id yang berbeda")
 
@@ -172,6 +186,7 @@ class TransactionCoordinator:
     def _clear(self, session: Session) -> None:
         with self._state_lock:
             self._uncertain_tx_ids.discard(session.tx_id)
+            self._pending_abort_tx_ids.discard(session.tx_id)
         session.tx_id = None
         session.in_explicit_tx = False
 

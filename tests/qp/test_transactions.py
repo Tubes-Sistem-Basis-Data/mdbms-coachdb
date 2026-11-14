@@ -108,6 +108,44 @@ class TestTransactionCoordinator(unittest.TestCase):
         self.assertEqual(self.session.tx_id, 11)
         self.assertTrue(self.session.in_explicit_tx)
 
+    def test_pending_rollback_blocks_work_until_abort_retry_succeeds(self):
+        self.coordinator.begin(self.session)
+        self.ccm.abort.side_effect = lambda tx: TxResult(tx, TxStatus.FAILED, False, "undo gagal")
+        self.assertFalse(self.coordinator.abort(self.session).ok)
+
+        work = Mock()
+        for operation in (
+            lambda: self.coordinator.begin(self.session),
+            lambda: self.coordinator.commit(self.session),
+            lambda: self.coordinator.run_autocommit(self.session, work),
+        ):
+            result = operation()
+            self.assertFalse(result.ok)
+            self.assertIn("Rollback", result.message)
+        work.assert_not_called()
+        self.ccm.commit.assert_not_called()
+        self.ccm.abort.assert_called_once_with(11)
+        self.assertTrue(self.coordinator.begin(Session(2)).ok)
+
+        self.ccm.abort.side_effect = lambda tx: TxResult(tx, TxStatus.ABORTED, True)
+        self.assertTrue(self.coordinator.abort(self.session).ok)
+        self.assert_idle()
+        self.assertIsNone(self.coordinator.blocked_result(self.session))
+        self.assertTrue(self.coordinator.begin(self.session).ok)
+
+    def test_invalid_abort_response_preserves_and_blocks_transaction(self):
+        self.coordinator.begin(self.session)
+        for response in (None, TxResult(99, TxStatus.ABORTED, True), TxResult(11, "ABORTED", True)):
+            with self.subTest(response=response):
+                self.ccm.abort.reset_mock()
+                self.ccm.abort.side_effect = None
+                self.ccm.abort.return_value = response
+                result = self.coordinator.abort(self.session)
+                self.assertFalse(result.ok)
+                self.assertEqual(self.session.tx_id, 11)
+                self.assertIsNotNone(self.coordinator.blocked_result(self.session))
+                self.ccm.abort.assert_called_once_with(11)
+
     def test_begin_and_commit_log_errors(self):
         self.ccm.begin_transaction.side_effect = LogError("begin gagal")
         self.assertFalse(self.coordinator.begin(self.session).ok)
