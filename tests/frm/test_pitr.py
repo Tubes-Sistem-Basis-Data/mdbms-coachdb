@@ -7,6 +7,7 @@ import time
 import unittest
 from pathlib import Path
 
+from common.errors import StorageError
 from common.log import LogKind, LogRecord, RecoveryTarget
 from common.storage import RID
 from common.transaction import NO_RECORD, ChangeOp, DataChange
@@ -34,6 +35,15 @@ class FakeStorageManager:
 
     def flush(self, page_ids: list[int] | None = None) -> None:
         self.calls.append("flush")
+
+    def rebuild_indexes(self) -> None:
+        self.calls.append("rebuild_indexes")
+
+
+class _GagalRebuildStorageManager(FakeStorageManager):
+    def rebuild_indexes(self) -> None:
+        self.calls.append("rebuild_indexes")
+        raise StorageError("gagal rebuild index")
 
 
 class FakeConcurrencyControl:
@@ -115,6 +125,32 @@ class TestRestoreTarget(PITRTestCase):
         ))
         self.assertGreaterEqual(result.last_tx_id, 2)
         self.assertGreaterEqual(result.last_lsn, records[-1].lsn)
+
+    def test_restore_membangun_ulang_index_sebelum_checkpoint(self) -> None:
+        rid = RID("student", 0, 1)
+        sm, _ = self._dependencies({rid: [1, "old"]})
+        self._write(LogKind.BEGIN, 1)
+        self._write(
+            LogKind.DATA, 1,
+            self._change(rid, ChangeOp.INSERT, NO_RECORD, [1, "old"]),
+        )
+        self._write(LogKind.COMMIT, 1)
+        self._write(LogKind.BEGIN, 2)
+        self._write(
+            LogKind.DATA, 2,
+            self._change(rid, ChangeOp.UPDATE, [1, "old"], [1, "new"]),
+        )
+        self._write(LogKind.COMMIT, 2)
+        sm.rows[rid] = [1, "new"]
+
+        result = self.frm.recover_to(RecoveryTarget(tx_id=1))
+
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(sm.rows.get(rid), [1, "old"])
+        update_call = f"update:{rid.table}:{rid.page_id}:{rid.slot}"
+        rebuild_index = sm.calls.index("rebuild_indexes")
+        self.assertLess(sm.calls.index(update_call), rebuild_index)
+        self.assertLess(rebuild_index, sm.calls.index("flush"))
 
     def test_restore_to_time_mengembalikan_state_sebelum_update(self) -> None:
         rid = RID("student", 0, 1)
@@ -242,6 +278,33 @@ class TestRestoreFailure(PITRTestCase):
         self.assertIn("tidak ditemukan", result.message)
         self.assertEqual(len(self.frm.read_log()), before)
         self.assertFalse(self._restore_positions())
+
+    def test_rebuild_index_gagal_menggagalkan_restore_tanpa_checkpoint(self) -> None:
+        rid = RID("student", 0, 1)
+        sm = _GagalRebuildStorageManager({rid: [1, "old"]})
+        self.frm.set_dependencies(sm, FakeConcurrencyControl())
+        self._write(LogKind.BEGIN, 1)
+        self._write(
+            LogKind.DATA, 1,
+            self._change(rid, ChangeOp.INSERT, NO_RECORD, [1, "old"]),
+        )
+        self._write(LogKind.COMMIT, 1)
+        self._write(LogKind.BEGIN, 2)
+        self._write(
+            LogKind.DATA, 2,
+            self._change(rid, ChangeOp.UPDATE, [1, "old"], [1, "new"]),
+        )
+        self._write(LogKind.COMMIT, 2)
+        sm.rows[rid] = [1, "new"]
+
+        result = self.frm.recover_to(RecoveryTarget(tx_id=1))
+
+        self.assertFalse(result.ok)
+        self.assertIn("gagal rebuild index", result.message)
+        kinds = [record.kind for record in self.frm.read_log()]
+        self.assertIn(LogKind.RESTORE, kinds)
+        self.assertNotIn(LogKind.CHECKPOINT_BEGIN, kinds)
+        self.assertNotIn(LogKind.CHECKPOINT_END, kinds)
 
     def test_recover_to_tanpa_dependensi_gagal(self) -> None:
         result = self.frm.recover_to(RecoveryTarget(tx_id=1))
