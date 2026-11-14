@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import create_autospec
 
 from common.catalog import ColumnSchema, DataType, IndexInfo, TableSchema, TableStats
-from common.expression import ColumnRef, Comparison, CompOp
+from common.expression import And, ColumnRef, Comparison, CompOp
 from common.interfaces import StorageManager
 from common.plan import Filter, IndexScan, Join, JoinKind, PlanNode, Project, TableScan
 from query_optimizer.cost_model import CostModel
@@ -303,6 +303,46 @@ class TestEdgeCases(JoinOrderCase):
         plan = Join(kind=JoinKind.CROSS, children=[r, s], output_columns=[_col("r", "id"), _col("s", "id")])
         result = self.reorder(plan)
         self.assertEqual(result.output_columns, [_col("s", "id"), _col("r", "id")])
+
+    def test_theta_join_associativity_redistributes_predicates(self) -> None:
+        """(r ⋈ s) ⋈ t dengan kondisi theta di-reassociate menjadi (t ⋈ s) ⋈ r yang lebih murah."""
+        cond_rs = _eq(_col("r", "id"), _col("s", "id"))
+        cond_st = _eq(_col("s", "id"), _col("t", "id"))
+        plan = _theta(cond_st, _theta(cond_rs, _scan("r"), _scan("s")), _scan("t"))
+        original_cost = self.model.get_cost(
+            _theta(cond_st, _theta(cond_rs, _scan("r"), _scan("s")), _scan("t"))
+        )
+        result = self.reorder(plan)
+        self.assertIsInstance(result, Join)
+        self.assertEqual(_tables(result), ["t", "s", "r"])
+        self.assertLess(self.model.get_cost(result), original_cost)
+
+    def test_theta_join_compound_and_condition_split_across_joins(self) -> None:
+        """Kondisi AND lintas tabel dipisahkan ke join dalam dan join luar sesuai cakupan tabelnya."""
+        cond_rs = _eq(_col("r", "id"), _col("s", "id"))
+        cond_st = _eq(_col("s", "id"), _col("t", "id"))
+        cond_rt = _eq(_col("r", "group_id"), _col("t", "ref"))
+        plan = _theta(And(conditions=[cond_st, cond_rt]), _theta(cond_rs, _scan("r"), _scan("s")), _scan("t"))
+        original_cost = self.model.get_cost(
+            _theta(And(conditions=[cond_st, cond_rt]), _theta(cond_rs, _scan("r"), _scan("s")), _scan("t"))
+        )
+        result = self.reorder(plan)
+        self.assertCountEqual(_tables(result), ["r", "s", "t"])
+        self.assertLess(self.model.get_cost(result), original_cost)
+        self.assertIsInstance(result.children[0], Join)
+        self.assertEqual(result.children[0].condition, cond_st)
+
+    def test_theta_join_right_deep_reordered(self) -> None:
+        """Join(r, Join(s, t)) dengan kondisi theta dapat direstrukturisasi menjadi lebih murah."""
+        cond_rs = _eq(_col("r", "id"), _col("s", "id"))
+        cond_st = _eq(_col("s", "id"), _col("t", "id"))
+        plan = _theta(cond_rs, _scan("r"), _theta(cond_st, _scan("s"), _scan("t")))
+        original_cost = self.model.get_cost(
+            _theta(cond_rs, _scan("r"), _theta(cond_st, _scan("s"), _scan("t")))
+        )
+        result = self.reorder(plan)
+        self.assertCountEqual(_tables(result), ["r", "s", "t"])
+        self.assertLess(self.model.get_cost(result), original_cost)
 
 
 if __name__ == "__main__":
