@@ -29,6 +29,11 @@ class _FakeFrm:
         self.flushed: list[int] = []
         self.fail_write = False
         self.fail_flush = False
+        self.rolled_back: list[int] = []
+
+    def rollback(self, tx_id: int) -> TxResult:
+        self.rolled_back.append(tx_id)
+        return TxResult(tx_id=tx_id, status=TxStatus.ABORTED, ok=True)
 
     def write_log(self, record):
         if self.fail_write:
