@@ -16,6 +16,14 @@ class RecoveryStatus(Enum):
     FAILED = "FAILED"
 
 
+class TransactionState(Enum):
+    """Status transaksi menurut hasil analisis log."""
+
+    ACTIVE = "ACTIVE"
+    COMMITTED = "COMMITTED"
+    ABORTED = "ABORTED"
+
+
 @dataclass
 class AnalysisResult:
     """Hasil fase analisis log."""
