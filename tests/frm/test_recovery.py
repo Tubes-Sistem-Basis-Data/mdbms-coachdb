@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from common.errors import StorageError
 from common.log import LogKind, LogRecord
 from common.storage import RID
 from common.transaction import NO_RECORD, ChangeOp, DataChange
@@ -33,6 +34,15 @@ class FakeStorageManager:
 
     def flush(self, page_ids: list[int] | None = None) -> None:
         self.calls.append("flush")
+
+    def rebuild_indexes(self) -> None:
+        self.calls.append("rebuild_indexes")
+
+
+class _GagalRebuildStorageManager(FakeStorageManager):
+    def rebuild_indexes(self) -> None:
+        self.calls.append("rebuild_indexes")
+        raise StorageError("gagal rebuild index")
 
 
 class FakeConcurrencyControl:
@@ -243,6 +253,73 @@ class TestCheckpointDanKosong(RecoveryTestCase):
         self.assertEqual(sm.rows.get(second_rid), [2])
         self.assertEqual(sm.calls.count("insert:student:0:1"), 0)
         self.assertEqual(sm.calls.count("insert:student:0:2"), 1)
+
+    def test_recovery_multi_transaksi_setelah_checkpoint(self) -> None:
+        first_rid = RID("student", 0, 1)
+        second_rid = RID("student", 0, 2)
+        third_rid = RID("student", 0, 3)
+
+        self._write(LogKind.BEGIN, 1)
+        self._write(LogKind.DATA, 1, self._change(first_rid, ChangeOp.INSERT, NO_RECORD, [1]))
+        last_lsn = self._write(LogKind.COMMIT, 1)
+        self.assertTrue(self.frm.flush_log(last_lsn))
+        self.frm.set_dependencies(FakeStorageManager({first_rid: [1]}), FakeConcurrencyControl())
+        self.assertTrue(self.frm.checkpoint().ok)
+
+        self._write(LogKind.BEGIN, 2)
+        self._write(LogKind.DATA, 2, self._change(second_rid, ChangeOp.INSERT, NO_RECORD, [2]))
+        self._write(LogKind.BEGIN, 3)
+        self._write(LogKind.DATA, 3, self._change(third_rid, ChangeOp.INSERT, NO_RECORD, [3]))
+        last_lsn = self._write(LogKind.COMMIT, 3)
+        self.assertTrue(self.frm.flush_log(last_lsn))
+
+        frm, sm, _ = self._prepare_recovery({first_rid: [1]})
+
+        result = frm.recover()
+
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(sm.rows.get(first_rid), [1])
+        self.assertNotIn(second_rid, sm.rows)
+        self.assertEqual(sm.rows.get(third_rid), [3])
+        self.assertEqual(sm.calls.count("insert:student:0:1"), 0)
+        self.assertEqual(sm.calls.count("insert:student:0:3"), 1)
+        self.assertGreaterEqual(result.last_tx_id, 3)
+
+    def test_recovery_membangun_ulang_index_sebelum_checkpoint(self) -> None:
+        rid = RID("student", 0, 1)
+        self._write(LogKind.BEGIN, 1)
+        self._write(LogKind.DATA, 1, self._change(rid, ChangeOp.INSERT, NO_RECORD, [1]))
+        last_lsn = self._write(LogKind.COMMIT, 1)
+        self.assertTrue(self.frm.flush_log(last_lsn))
+
+        frm, sm, _ = self._prepare_recovery()
+
+        result = frm.recover()
+
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(sm.calls.count("rebuild_indexes"), 1)
+        last_flush = len(sm.calls) - 1 - sm.calls[::-1].index("flush")
+        self.assertLess(sm.calls.index("rebuild_indexes"), last_flush)
+
+    def test_rebuild_index_gagal_menggagalkan_recovery(self) -> None:
+        rid = RID("student", 0, 1)
+        self._write(LogKind.BEGIN, 1)
+        self._write(LogKind.DATA, 1, self._change(rid, ChangeOp.INSERT, NO_RECORD, [1]))
+        last_lsn = self._write(LogKind.COMMIT, 1)
+        self.assertTrue(self.frm.flush_log(last_lsn))
+
+        frm = self._reopen()
+        sm = _GagalRebuildStorageManager({rid: [1]})
+        frm.set_dependencies(sm, FakeConcurrencyControl())
+
+        result = frm.recover()
+
+        self.assertFalse(result.ok)
+        self.assertIn("gagal rebuild index", result.message)
+        self.assertFalse(frm._recovery_service.is_ready())
+        self.assertNotIn(LogKind.CHECKPOINT_END, [
+            record.kind for record in frm.read_log()
+        ])
 
     def test_wal_kosong_recovery_sukses(self) -> None:
         frm, sm, _ = self._prepare_recovery()

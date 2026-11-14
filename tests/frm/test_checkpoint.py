@@ -83,6 +83,32 @@ class TestCheckpointManual(CheckpointTestCase):
         self.sm.flush.assert_not_called()
         self.assertEqual(self._kinds(), [])
 
+    def test_checkpoint_merekam_transaksi_aktif_dari_wal(self):
+        self.logger.log_begin(4)
+
+        result = self.manager.checkpoint()
+
+        self.assertTrue(result.ok, result.message)
+        meta = self.store.find_latest_completed()
+        self.assertEqual(meta.active_tx, [4])
+        self.assertEqual(meta.max_tx_id, 4)
+
+    def test_checkpoint_mengambil_snapshot_jika_sm_mendukung(self):
+        self.sm.snapshot_to = Mock()
+
+        result = self.manager.checkpoint()
+
+        self.assertTrue(result.ok, result.message)
+        path = self.store.snapshot_path(result.lsn)
+        self.sm.snapshot_to.assert_called_once_with(path)
+        meta = self.store.find_latest_completed()
+        self.assertEqual(meta.snapshot_path, path)
+        self.assertTrue((self.root / "snapshots" / f"checkpoint-{result.lsn}.json").is_file())
+        self.assertEqual(
+            self.store.find_snapshot_before(RecoveryTarget(tx_id=1)),
+            meta,
+        )
+
     def test_log_lama_dan_max_tx_id_dipertahankan(self):
         self.logger.log_begin(17)
         self.logger.log_commit(17)
