@@ -4,7 +4,7 @@ Mini DBMS relasional untuk Tugas Besar **IF3140 Sistem Basis Data 2026**, dikerj
 
 Python 3.10 atau lebih baru, hanya library standar.
 
-**Status:** Milestone 1. Kontrak antarmuka (`common/`) sudah tersedia dan facade tiap komponen sudah berupa mock: semua method bisa dipanggil dan mengembalikan tipe yang sesuai kontrak, tanpa logika asli. Implementasi asli dikerjakan masing-masing group di folder komponennya mulai Milestone 2.
+**Status:** Milestone 3. Kelima komponen sudah memakai implementasi asli dan dirangkai oleh `main.py`. Setiap komponen punya driver program untuk pengujian mandiri.
 
 ## Komponen
 
@@ -79,10 +79,34 @@ Daftar requirement tiap komponen ada di `README.md` folder komponennya.
 git clone https://github.com/Tubes-Sistem-Basis-Data/mdbms-coachdb.git
 cd mdbms-coachdb
 
-python main.py --demo                 # jalankan query contoh
-python main.py --protocol timestamp
+python main.py --demo                 # jalankan query contoh lalu keluar
+python main.py --cli                  # REPL CLI interaktif lokal
+python main.py --serve                # server TCP multi-client
+python client.py                      # CLI client ke server (--host, --port)
 python -m unittest discover -s tests  # jalankan semua test
 ```
+
+Opsi `main.py`:
+
+| Opsi | Keterangan | Default |
+| --- | --- | --- |
+| `--protocol lock\|timestamp` | protokol concurrency control | `lock` |
+| `--data-dir <path>` | direktori data | `data` |
+| `--host`, `--port` | alamat server TCP | `127.0.0.1`, `5440` |
+
+Data disimpan di `--data-dir`. Pada direktori data yang masih kosong belum ada tabel, jadi buat tabel dan isi datanya dulu (`CREATE TABLE`, `INSERT`) sebelum menjalankan query lain.
+
+### Driver komponen
+
+```bash
+python -m drivers.qp_driver
+python -m drivers.qo_driver --no-catalog
+python -m drivers.sm_driver
+python -m concurrency_control.driver --protocol lock   # atau timestamp
+python -m drivers.frm_driver
+```
+
+`drivers.qo_driver` tanpa `--no-catalog` membaca skema dan statistik dari Storage Manager di `--data-dir`, sehingga tabel contoh harus sudah ada. Dengan `--no-catalog`, driver memakai katalog contoh in-memory (`student`, `course`, `enrollment`) supaya QO bisa diuji terpisah dari Storage Manager.
 
 ## Struktur
 
@@ -97,6 +121,7 @@ mdbms-coachdb/
 ├── concurrency_control/  # Group 4
 ├── failure_recovery/  # Group 2
 ├── drivers/           # driver program komponen
+├── scripts/           # skrip pendukung (fixture data contoh)
 ├── tests/             # test kontrak dan unit test komponen
 └── docs/              # keputusan desain dan riwayat perubahan kontrak
 ```
