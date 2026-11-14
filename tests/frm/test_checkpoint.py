@@ -10,7 +10,7 @@ from unittest.mock import ANY, Mock
 
 from common.errors import LogError, StorageError
 from common.interfaces import ConcurrencyControlManager, StorageManager
-from common.log import LogKind
+from common.log import LogKind, RecoveryTarget
 from failure_recovery import FailureRecoveryManager
 from failure_recovery.checkpoint.checkpoint_manager import CheckpointManager
 from failure_recovery.checkpoint.checkpoint_store import CheckpointStore
@@ -74,6 +74,40 @@ class TestCheckpointManual(CheckpointTestCase):
         self.assertEqual(meta.checkpoint_lsn, result.lsn)
         self.assertEqual(meta.active_tx, [])
         self.assertEqual(meta.snapshot_path, "")
+
+    def test_restore_tanpa_pitr_gagal_tanpa_checkpoint(self):
+        result = self.manager.restore_to(RecoveryTarget(tx_id=1))
+
+        self.assertFalse(result.ok)
+        self.assertIn("PITR", result.message)
+        self.sm.flush.assert_not_called()
+        self.assertEqual(self._kinds(), [])
+
+    def test_checkpoint_merekam_transaksi_aktif_dari_wal(self):
+        self.logger.log_begin(4)
+
+        result = self.manager.checkpoint()
+
+        self.assertTrue(result.ok, result.message)
+        meta = self.store.find_latest_completed()
+        self.assertEqual(meta.active_tx, [4])
+        self.assertEqual(meta.max_tx_id, 4)
+
+    def test_checkpoint_mengambil_snapshot_jika_sm_mendukung(self):
+        self.sm.snapshot_to = Mock()
+
+        result = self.manager.checkpoint()
+
+        self.assertTrue(result.ok, result.message)
+        path = self.store.snapshot_path(result.lsn)
+        self.sm.snapshot_to.assert_called_once_with(path)
+        meta = self.store.find_latest_completed()
+        self.assertEqual(meta.snapshot_path, path)
+        self.assertTrue((self.root / "snapshots" / f"checkpoint-{result.lsn}.json").is_file())
+        self.assertEqual(
+            self.store.find_snapshot_before(RecoveryTarget(tx_id=1)),
+            meta,
+        )
 
     def test_log_lama_dan_max_tx_id_dipertahankan(self):
         self.logger.log_begin(17)

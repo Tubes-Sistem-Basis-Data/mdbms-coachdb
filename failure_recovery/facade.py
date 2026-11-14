@@ -18,8 +18,14 @@ from common.log import (
 from common.transaction import TxResult, TxStatus
 from failure_recovery.checkpoint.checkpoint_manager import CheckpointManager
 from failure_recovery.checkpoint.checkpoint_store import CheckpointStore
+from failure_recovery.checkpoint.pitr_manager import PITRManager
 from failure_recovery.log.log_reader import LogReader
 from failure_recovery.log.wal_logger import WalLogger
+from failure_recovery.recovery.analysis import RecoveryStatus
+from failure_recovery.recovery.analyzer import RecoveryAnalyzer
+from failure_recovery.recovery.recovery_manager import RecoveryManager
+from failure_recovery.recovery.redo_executor import RedoExecutor
+from failure_recovery.recovery.undo_coordinator import UndoCoordinator
 from failure_recovery.results import RollbackResult
 from failure_recovery.rollback.rollback_manager import RollbackManager
 
@@ -125,11 +131,64 @@ class FailureRecoveryManager(FailureRecoveryManagerBase):
 
     def recover(self) -> RecoveryResult:
         """Crash recovery lewat RecoveryManager. Dipanggil main.py saat startup."""
-        return RecoveryResult(ok=True, message="belum diimplementasikan")
+        if self._recovery_service is None:
+            return RecoveryResult(ok=False, message="Dependensi SM dan CCM belum dipasang")
+        try:
+            report = self._recovery_service.recover()
+        except MdbmsError as exc:
+            return RecoveryResult(ok=False, message=str(exc))
+        except Exception as exc:
+            return RecoveryResult(ok=False, message=f"Recovery gagal: {exc}")
+        if report is None:
+            return RecoveryResult(ok=False, message="Recovery tidak menghasilkan report")
+
+        last_lsn = max((record.lsn for record in self.read_log()), default=0)
+        if report.status is not RecoveryStatus.SUCCESS:
+            message = "; ".join(report.errors) or f"Recovery {report.status.value.lower()}"
+            return RecoveryResult(
+                ok=False,
+                last_tx_id=report.max_tx_id,
+                last_lsn=last_lsn,
+                message=message,
+            )
+        message = (
+            f"Recovery selesai: {report.redo_count} redo, "
+            f"{report.undo_count} undo, {len(report.undone_tx)} transaksi dibatalkan"
+        )
+        return RecoveryResult(
+            ok=True,
+            last_tx_id=report.max_tx_id,
+            last_lsn=last_lsn,
+            message=message,
+        )
 
     def recover_to(self, target: RecoveryTarget) -> RecoveryResult:
         """Pemulihan ke waktu atau transaksi tertentu lewat PITRManager."""
-        return RecoveryResult(ok=False, message="belum diimplementasikan")
+        if self._checkpoint_service is None:
+            return RecoveryResult(ok=False, message="Dependensi SM dan CCM belum dipasang")
+        try:
+            result = self._checkpoint_service.restore_to(target)
+        except MdbmsError as exc:
+            return RecoveryResult(ok=False, message=str(exc))
+        except Exception as exc:
+            return RecoveryResult(ok=False, message=f"Pemulihan gagal: {exc}")
+        if result is None:
+            return RecoveryResult(ok=False, message="Pemulihan tidak menghasilkan status")
+
+        records = self.read_log()
+        last_tx_id = max(
+            (record.tx_id for record in records if record.tx_id is not None),
+            default=0,
+        )
+        last_lsn = max((record.lsn for record in records), default=0)
+        return RecoveryResult(
+            ok=result.ok,
+            last_tx_id=last_tx_id,
+            last_lsn=last_lsn,
+            message=result.message or (
+                "Pemulihan selesai" if result.ok else "Pemulihan gagal"
+            ),
+        )
 
     def read_log(self, tx_id: int | None = None) -> list[LogRecord]:
         """Isi log lewat LogReader, bisa difilter per transaksi."""
@@ -139,14 +198,37 @@ class FailureRecoveryManager(FailureRecoveryManagerBase):
         """Suntik SM dan CCM. Dipanggil main.py saat bootstrap."""
         self._sm = sm
         self._ccm = ccm
+        self._rollback_interface = RollbackManager(
+            self._log_writer,
+            self._log_flusher,
+            self._log_reader,
+            sm,
+        )
+        pitr = PITRManager(
+            store=self._checkpoint_store,
+            sm=sm,
+            log_writer=self._log_writer,
+            log_reader=self._log_reader,
+            log_flusher=self._log_flusher,
+        )
         self._checkpoint_service = CheckpointManager(
             log_flusher=self._log_flusher,
             ccm=ccm,
             sm=sm,
             log_writer=self._log_writer,
             store=self._checkpoint_store,
-            pitr=None,
+            pitr=pitr,
             log_reader=self._log_reader,
+        )
+        self._recovery_service = RecoveryManager(
+            analyzer=RecoveryAnalyzer(self._log_reader),
+            redo=RedoExecutor(sm),
+            undo=UndoCoordinator(self._rollback_interface),
+            checkpoint_query=self._checkpoint_store,
+            checkpoint_service=self._checkpoint_service,
+            log_flusher=self._log_flusher,
+            sm=sm,
+            ccm=ccm,
         )
 
     def close(self) -> None:
