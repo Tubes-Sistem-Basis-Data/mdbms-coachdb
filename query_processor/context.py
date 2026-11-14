@@ -21,7 +21,7 @@ from query_processor.errors import ExecutionError
 
 @dataclass
 class ExecContext:
-    tx_id: int
+    tx_id: int | None
     sm: StorageManager
     ccm: ConcurrencyControlManager
     access_intent: Action = Action.READ
