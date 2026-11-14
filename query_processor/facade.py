@@ -167,6 +167,9 @@ class QueryProcessorFacade(QueryProcessor):
     def execute_query(self, sql: str, session: Session) -> ExecutionResult:
         if session is not None:
             self._sessions.register_session(session)
+            blocked = self._transactions.blocked_result(session)
+            if blocked is not None:
+                return blocked
 
         if not isinstance(sql, str):
             return ExecutionResult(ok=False, message="ERROR [SYNTAX]: Query harus berupa string")
@@ -448,10 +451,8 @@ class QueryProcessorFacade(QueryProcessor):
         try:
             if is_disconnect:
                 self._transactions.abort_on_disconnect(session)
-            if session.tx_id is not None:
+            elif session.tx_id is not None:
                 self._ccm.abort(session.tx_id)
-            elif tx_id is not None:
-                self._ccm.abort(tx_id)
         except Exception:
             logger.exception("Gagal membatalkan transaksi aktif %s pada sesi %s", tx_id, session.session_id)
         finally:

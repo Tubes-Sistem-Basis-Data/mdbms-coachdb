@@ -4,6 +4,7 @@ import io
 import threading
 import time
 import unittest
+from unittest.mock import Mock
 from typing import Iterator
 
 from client import ClientCLI, StatementSplitter
@@ -624,7 +625,87 @@ class TestQueryProcessorFacade(unittest.TestCase):
         self.assertIsNotNone(tx_id)
 
         self.qp.close_session(session.session_id)
-        self.assertIn(tx_id, self.ccm.aborted)
+        self.assertEqual(self.ccm.aborted, [tx_id])
+        self.qp.close_session(session.session_id)
+        self.assertEqual(self.ccm.aborted, [tx_id])
+
+    def test_uncertain_autocommit_blocks_followup_commands(self) -> None:
+        session = self.qp.open_session()
+        self.ccm.fail_commit = True
+        executable = Mock(spec=Executable)
+        executable.execute.return_value = ExecutionResult(ok=True, affected_rows=1)
+        self.translator.build = Mock(return_value=executable)
+
+        result = self.qp.execute_query("UPDATE student SET gpa = 3.9;", session)
+        self.assertFalse(result.ok)
+        self.assertEqual(session.tx_id, 1)
+        self.assertFalse(session.in_explicit_tx)
+        executable.execute.assert_called_once()
+
+        self.qo.parse_query = Mock(wraps=self.qo.parse_query)
+        self.ccm.commit = Mock(wraps=self.ccm.commit)
+        for sql in (
+            "SELECT * FROM student;", "UPDATE student SET gpa = 4.0;",
+            "BEGIN;", "COMMIT;", "ABORT;", "CHECKPOINT;",
+        ):
+            with self.subTest(sql=sql):
+                result = self.qp.execute_query(sql, session)
+                self.assertFalse(result.ok)
+                self.assertIn("belum pasti", result.message)
+                self.assertEqual(session.tx_id, 1)
+
+        self.qo.parse_query.assert_not_called()
+        executable.execute.assert_called_once()
+        self.translator.build.assert_called_once()
+        self.ccm.commit.assert_not_called()
+        self.assertEqual(self.ccm.begun, [1])
+        self.assertEqual(self.ccm.aborted, [])
+
+        # Sesi lain masih bisa menjalankan transaksi normal.
+        self.ccm.fail_commit = False
+        other = self.qp.open_session()
+        self.assertTrue(self.qp.execute_query("SELECT * FROM student;", other).ok)
+        self.assertEqual(self.ccm.begun, [1, 2])
+
+        # Disconnect tidak boleh mengubah transaksi yang commit-nya belum pasti.
+        with self.assertLogs("coachdb.qp", level="ERROR"):
+            self.qp.close_session(session.session_id)
+        self.assertEqual(self.ccm.aborted, [])
+
+    def test_commit_exception_blocks_followup_query(self) -> None:
+        session = self.qp.open_session()
+        self.ccm.commit = Mock(side_effect=LogError("flush commit gagal"))
+        self.translator.build = Mock(wraps=self.translator.build)
+        result = self.qp.execute_query("SELECT * FROM student;", session)
+        self.assertFalse(result.ok)
+        self.assertIn("flush commit gagal", result.message)
+
+        result = self.qp.execute_query("SELECT * FROM student;", session)
+        self.assertFalse(result.ok)
+        self.assertIn("belum pasti", result.message)
+        self.translator.build.assert_called_once()
+        self.ccm.commit.assert_called_once_with(1)
+        self.assertEqual(self.ccm.aborted, [])
+
+    def test_uncertain_explicit_commit_blocks_followup_query(self) -> None:
+        session = self.qp.open_session()
+        self.qp.execute_query("BEGIN;", session)
+        self.ccm.fail_commit = True
+        self.assertFalse(self.qp.execute_query("COMMIT;", session).ok)
+        self.translator.build = Mock(wraps=self.translator.build)
+
+        result = self.qp.execute_query("SELECT * FROM student;", session)
+        self.assertFalse(result.ok)
+        self.assertIn("belum pasti", result.message)
+        self.translator.build.assert_not_called()
+
+    def test_disconnect_abort_failure_is_not_retried(self) -> None:
+        session = self.qp.open_session()
+        self.qp.execute_query("BEGIN;", session)
+        self.ccm.abort = Mock(return_value=TxResult(1, TxStatus.FAILED, False, "rollback gagal"))
+        with self.assertLogs("coachdb.qp", level="ERROR"):
+            self.qp.close_session(session.session_id)
+        self.ccm.abort.assert_called_once_with(1)
 
     def test_meta_commands_explain_checkpoint_show_log_restore(self) -> None:
         session = self.qp.open_session()
