@@ -340,8 +340,10 @@ class QueryProcessorFacade(QueryProcessor):
                 ccm=self._ccm,
                 access_intent=intent,
             )
+            ctx.check_cancelled()
             executable = self._translator.build(optimized, ctx)
             res = executable.execute(ctx)
+            ctx.check_cancelled()
             if res.ok and not res.message:
                 res.message = self._default_success_message(optimized.kind, res.affected_rows)
             return res
