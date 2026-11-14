@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from math import ceil, floor, isfinite, prod
 
 from common import config
-from common.catalog import DataType, TableSchema, TableStats
+from common.catalog import DataType, IndexKind, TableSchema, TableStats
 from common.errors import SemanticError
 from common.expression import And, BinaryOp, ColumnRef, Comparison, CompOp, Expression, Literal
 from common.interfaces import StorageManager
@@ -109,8 +109,12 @@ class CostModel:
                 result = _Estimate(0.0, 0, 0.0, [], 0.0)
             elif isinstance(node, TableScan):
                 result = self._scan(node.table, catalog)
+                if node.alias is not None:
+                    result = self._rename(result, node.alias)
             elif isinstance(node, IndexScan):
                 result = self._index_scan(node, self._scan(node.table, catalog))
+                if node.alias is not None:
+                    result = self._rename(result, node.alias)
             elif isinstance(node, Filter):
                 result = self._filter(node.condition, children[0])
             elif isinstance(node, Join):
@@ -135,10 +139,16 @@ class CostModel:
         finally:
             active.remove(id(node))
 
+    def _rename(self, estimate: _Estimate, source: str) -> _Estimate:
+        columns = [replace(col, table=source, qualifiers=(source,)) for col in estimate.columns]
+        return replace(estimate, columns=columns)
+
     def _index_scan(self, node: IndexScan, scan: _Estimate) -> _Estimate:
-        """Kompatibilitas QO-12; biaya tetap full scan sampai model index M3."""
+        """Estimasi baris dan biaya IndexScan berdasarkan selektivitas predikat index (M3)."""
         if node.index.table != node.table:
             raise SemanticError("Tabel IndexScan berbeda dengan metadata index", node.table)
+        if node.index.kind is IndexKind.HASH and node.op is not CompOp.EQ:
+            raise SemanticError("Index HASH hanya mendukung kesamaan")
         ref = ColumnRef(node.table, node.index.column)
         _resolve(ref, scan.columns)
 
@@ -164,9 +174,8 @@ class CostModel:
             condition = conditions[0] if len(conditions) == 1 else And(conditions)
         else:
             raise SemanticError("Operator IndexScan tidak didukung")
-        # Selektivitas memakai kolom dan predikat index, bukan jumlah kolom tabel.
-        # Jangan mengasumsikan penghematan I/O tanpa model traversal/fetch index.
-        return self._filter(condition, scan)
+        filtered = self._filter(condition, scan)
+        return replace(filtered, cost=min(scan.cost, float(filtered.blocks)))
 
     def _join(self, node: Join, left: _Estimate, right: _Estimate) -> _Estimate:
         if node.algorithm != "BNLJ":
