@@ -169,6 +169,7 @@ class TestFacadeIndex(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.sm = StorageManager(self.tmp.name, 4)
+        self.addCleanup(self.sm.close)
         _ = self.sm._catalog.create_table(
             "student", student_schema(), ("id",), ()
         )
@@ -236,6 +237,7 @@ class TestFacadeIndex(unittest.TestCase):
         self.sm.create_index(self.info)
         self.sm._buffer.flush_all()
         restarted = StorageManager(self.tmp.name, 4)
+        self.addCleanup(restarted.close)
         self.assertEqual(
             restarted.index_lookup("student", "code", "IF"),
             self.rids[:2] + [self.rids[3]],
