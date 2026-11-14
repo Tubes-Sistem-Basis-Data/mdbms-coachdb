@@ -7,12 +7,19 @@ from math import ceil, floor, isfinite, prod
 from common import config
 from common.catalog import DataType, IndexKind, TableSchema, TableStats
 from common.errors import SemanticError
-from common.expression import And, BinaryOp, ColumnRef, Comparison, CompOp, Expression, Literal
+from common.expression import And, BinaryOp, ColumnRef, Comparison, CompOp, Expression, Literal, Subquery
 from common.interfaces import StorageManager
-from common.plan import Filter, IndexScan, Join, JoinKind, PlanNode, Project, Sort, TableScan
+from common.plan import (
+    CreateTable, DropTable, Filter, IndexScan, Join, JoinKind, Limit, PlanNode, Project, Sort,
+    SubqueryScan, TableScan,
+)
+from query_optimizer.plan_utils import output_names
 
 
-_ARITY = {PlanNode: 0, TableScan: 0, IndexScan: 0, Filter: 1, Project: 1, Join: 2, Sort: 1}
+_ARITY = {
+    PlanNode: 0, TableScan: 0, IndexScan: 0, Filter: 1, Project: 1, Join: 2, Sort: 1,
+    Limit: 1, SubqueryScan: 1, CreateTable: 0, DropTable: 0,
+}
 _UNKNOWN_EQUALITY = 0.1
 _RANGE_SELECTIVITY = 1 / 3
 _COMPARISONS = {
@@ -104,21 +111,36 @@ class CostModel:
         active.add(id(node))
         try:
             children = [self._estimate(child, catalog, active) for child in node.children]
-            if type(node) is PlanNode:
-                # Sentinel plan kosong yang dipakai uji kontrak facade.
+            if type(node) is PlanNode or isinstance(node, (CreateTable, DropTable)):
+                # Sentinel plan kosong yang dipakai uji kontrak facade, dan DDL tanpa transfer blok data.
                 result = _Estimate(0.0, 0, 0.0, [], 0.0)
             elif isinstance(node, TableScan):
                 result = self._scan(node.table, catalog)
                 if node.alias is not None:
-                    result = self._rename(result, node.alias)
+                    result = self._rename(result, node.alias, [col.name for col in result.columns])
             elif isinstance(node, IndexScan):
                 result = self._index_scan(node, self._scan(node.table, catalog))
                 if node.alias is not None:
-                    result = self._rename(result, node.alias)
+                    result = self._rename(result, node.alias, [col.name for col in result.columns])
             elif isinstance(node, Filter):
                 result = self._filter(node.condition, children[0])
+                result = replace(result, cost=result.cost + self._subquery_cost(node.condition, catalog, active))
             elif isinstance(node, Join):
                 result = self._join(node, children[0], children[1])
+                if node.condition is not None:
+                    result = replace(result, cost=result.cost + self._subquery_cost(node.condition, catalog, active))
+            elif isinstance(node, Limit):
+                child = children[0]
+                if type(node.count) is not int or node.count < 0:
+                    raise SemanticError("Nilai LIMIT harus bilangan bulat tidak negatif")
+                rows = min(child.rows, float(node.count))
+                # biaya tetap biaya anak karena operator di bawahnya bisa saja harus selesai lebih dulu (mis. Sort)
+                result = replace(child, rows=rows, blocks=self._blocks(rows, child.width),
+                                 columns=_cap_distinct(child.columns, rows))
+            elif isinstance(node, SubqueryScan):
+                child = children[0]
+                names = output_names(node.children[0], [col.name for col in child.columns])
+                result = self._rename(child, node.alias, names)
             elif isinstance(node, Sort):
                 child = children[0]
                 _resolve(node.column, child.columns)
@@ -139,10 +161,23 @@ class CostModel:
         finally:
             active.remove(id(node))
 
-    def _rename(self, estimate: _Estimate, source: str) -> _Estimate:
-        columns = [replace(col, table=source, qualifiers=(source,)) for col in estimate.columns]
+    def _rename(self, estimate: _Estimate, source: str, names: list[str]) -> _Estimate:
+        """Ganti prefix kolom menjadi alias tabel atau alias subquery."""
+        columns = [replace(col, table=source, name=name, qualifiers=(source,))
+                   for col, name in zip(estimate.columns, names)]
         return replace(estimate, columns=columns)
 
+    def _subquery_cost(
+        self, expr: Expression, catalog: dict[str, tuple[TableStats, TableSchema]], active: set[int],
+    ) -> float:
+        """Biaya subquery skalar di kondisi. Subquery tak-berkorelasi cukup dievaluasi sekali."""
+        if isinstance(expr, Subquery):
+            return self._estimate(expr.plan, catalog, active).cost
+        if isinstance(expr, And):
+            return sum(self._subquery_cost(cond, catalog, active) for cond in expr.conditions)
+        if isinstance(expr, (Comparison, BinaryOp)):
+            return self._subquery_cost(expr.left, catalog, active) + self._subquery_cost(expr.right, catalog, active)
+        return 0.0
     def _index_scan(self, node: IndexScan, scan: _Estimate) -> _Estimate:
         """Estimasi baris dan biaya IndexScan berdasarkan selektivitas predikat index (M3)."""
         if node.index.table != node.table:
@@ -330,7 +365,7 @@ class CostModel:
         try:
             if isinstance(expr, ColumnRef):
                 return _resolve(expr, columns)
-            if isinstance(expr, Literal):
+            if isinstance(expr, (Literal, Subquery)):
                 return None
             if isinstance(expr, BinaryOp):
                 self._value(expr.left, columns, active)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from common.expression import And, Comparison, ColumnRef, Expression
 from common.plan import Filter, Join, JoinKind, PlanNode
+from query_optimizer.plan_utils import source_list
 
 
 def _tables_in_expr(expr: Expression) -> set[str]:
@@ -22,13 +23,7 @@ def _tables_in_expr(expr: Expression) -> set[str]:
 def _source_tables(node: PlanNode) -> set[str]:
     if node.output_columns:
         return {ref.table for ref in node.output_columns if ref.table}
-    from common.plan import TableScan, IndexScan
-    if isinstance(node, (TableScan, IndexScan)):
-        return {node.table}
-    result: set[str] = set()
-    for child in node.children:
-        result |= _source_tables(child)
-    return result
+    return set(source_list(node))
 
 
 def _split_conditions(

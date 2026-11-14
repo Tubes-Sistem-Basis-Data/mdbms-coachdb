@@ -45,8 +45,9 @@ class Planner:
         join_search: str = "heuristic",
         genetic: GeneticJoinOptimizer | None = None,
     ) -> None:
+        """`join_search` "heuristic" memakai JoinOrderOptimizer, "ga" memakai GeneticJoinOptimizer."""
         if join_search not in ("heuristic", "ga"):
-            raise ValueError(f"join_search tidak dikenal: {join_search}")
+            raise ValueError("join_search harus 'heuristic' atau 'ga'")
         self._cost_model = cost_model
         self._join_search = join_search
         self._access_chooser = AccessPathChooser()
