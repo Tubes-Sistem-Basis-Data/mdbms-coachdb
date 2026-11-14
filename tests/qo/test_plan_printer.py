@@ -145,7 +145,8 @@ class TestLabel(unittest.TestCase):
                    "CreateIndex [idx_gpa ON student(gpa) USING HASH]")
         schema = TableSchema("course", [ColumnSchema("id", DataType.INTEGER)])
         self.check(CreateTable(schema=schema), "CreateTable [course]")
-        self.check(DropTable(table="course"), "DropTable [course]")
+        self.check(DropTable(table="course"), "DropTable [course RESTRICT]")
+        self.check(DropTable(table="course", cascade=True), "DropTable [course CASCADE]")
 
     def test_fallback_tidak_crash(self) -> None:
         self.check(PlanNode(), "PlanNode")

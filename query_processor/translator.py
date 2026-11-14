@@ -259,10 +259,7 @@ class PlanTranslator:
         if isinstance(node, Sort):
             child.schema.index_of(node.column)
             return SortOp(child, node.column, node.ascending)
-        positions = [child.schema.index_of(ref) for ref in node.columns]
-        project = ProjectOp(child, list(node.columns))
-        project.schema = OutputSchema([child.schema.columns[i] for i in positions])
-        return project
+        return ProjectOp(child, list(node.columns))
 
     def _join_schema(
         self, left: OutputSchema, right: OutputSchema, kind: JoinKind,

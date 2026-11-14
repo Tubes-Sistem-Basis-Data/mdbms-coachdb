@@ -1,7 +1,7 @@
 from __future__ import annotations
 from copy import deepcopy
 from common.expression import (And, BinaryOp, ColumnRef, Comparison, CompOp, Expression)
-from common.plan import Filter, IndexScan, Join, PlanNode, Project, Sort, TableScan
+from common.plan import Filter, IndexScan, Join, PlanNode, Project, Sort, SubqueryScan, TableScan
 
 class SelectionRewriter:
     def apply(self, plan: PlanNode) -> PlanNode:
@@ -176,6 +176,11 @@ class SelectionRewriter:
                 node = nodes.pop()
                 if isinstance(node, (TableScan, IndexScan)):
                     tables.add(getattr(node, "alias", None) or node.table)
+
+                # Isi subquery di FROM tidak terlihat dari luar, cukup aliasnya
+                elif isinstance(node, SubqueryScan):
+                    tables.add(node.alias)
+                    continue
 
                 nodes.extend(node.children)
 

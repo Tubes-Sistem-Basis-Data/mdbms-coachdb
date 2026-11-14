@@ -99,6 +99,29 @@ class TxLifecycleTest(unittest.TestCase):
     def test_wait_until_idle_no_active_returns(self) -> None:
         self.ccm.wait_until_idle()
 
+    def test_initialize_continues_tx_id_after_recovery(self) -> None:
+        self.ccm.initialize(41)
+        self.assertEqual(self.ccm.begin_transaction(), 42)
+
+    def test_initialize_timestamp_exceeds_recovered_tx_id(self) -> None:
+        self.ccm.initialize(41)
+        tx_id = self.ccm.begin_transaction()
+        self.assertGreater(self.ccm._transactions[tx_id].timestamp, 41)
+
+    def test_initialize_zero_starts_from_one(self) -> None:
+        self.ccm.initialize(0)
+        self.assertEqual(self.ccm.begin_transaction(), 1)
+
+    def test_initialize_never_lowers_counter(self) -> None:
+        self.ccm.begin_transaction()
+        self.ccm.begin_transaction()
+        self.ccm.initialize(1)
+        self.assertEqual(self.ccm.begin_transaction(), 3)
+
+    def test_initialize_rejects_negative(self) -> None:
+        with self.assertRaises(ValueError):
+            self.ccm.initialize(-1)
+
 
 if __name__ == "__main__":
     unittest.main()
