@@ -5,21 +5,24 @@ from math import isfinite
 
 from common.catalog import ColumnSchema, DataType, IndexInfo, IndexKind, TableSchema
 from common.errors import SemanticError
-from common.expression import And, ArithOp, BinaryOp, ColumnRef, Comparison, CompOp, Expression, Literal
+from common.expression import (
+    And, ArithOp, BinaryOp, ColumnRef, Comparison, CompOp, Expression, Literal, Subquery,
+)
 from common.interfaces import StorageManager
 from common.plan import (
-    CreateIndex, Delete, Filter, IndexScan, Insert, Join, JoinKind, ParsedQuery,
-    PlanNode, Project, QueryKind, Sort, TableScan, Update,
+    CreateIndex, CreateTable, Delete, DropTable, Filter, IndexScan, Insert, Join, JoinKind, Limit,
+    ParsedQuery, PlanNode, Project, QueryKind, Sort, SubqueryScan, TableScan, Update,
 )
+from query_optimizer.plan_utils import output_names, source_list
 
 
 _NUMERIC = (DataType.INTEGER, DataType.FLOAT)
 _TEXT = (DataType.CHAR, DataType.VARCHAR)
 _ARITY = {
-    TableScan: 0, IndexScan: 0, Filter: 1, Project: 1, Join: 2, Sort: 1,
-    Insert: 0, Update: 1, Delete: 1, CreateIndex: 0,
+    TableScan: 0, IndexScan: 0, Filter: 1, Project: 1, Join: 2, Sort: 1, Limit: 1, SubqueryScan: 1,
+    Insert: 0, Update: 1, Delete: 1, CreateIndex: 0, CreateTable: 0, DropTable: 0,
 }
-_ROW_NODES = (TableScan, IndexScan, Filter, Project, Join, Sort)
+_ROW_NODES = (TableScan, IndexScan, Filter, Project, Join, Sort, Limit, SubqueryScan)
 
 
 @dataclass(frozen=True)
@@ -37,10 +40,8 @@ def _compatible(left: DataType, right: DataType) -> bool:
 
 
 def _source_tables(node: PlanNode) -> set[str]:
-    """Asal tabel tetap ada walaupun kolomnya dibuang oleh Project."""
-    if isinstance(node, (TableScan, IndexScan)):
-        return {node.table}
-    return {table for child in node.children for table in _source_tables(child)}
+    """Asal tabel (atau aliasnya) tetap ada walaupun kolomnya dibuang oleh Project."""
+    return set(source_list(node))
 
 
 class Binder:
@@ -90,16 +91,33 @@ class Binder:
             children = [self._bind_plan(child, schemas, active) for child in node.children]
             if isinstance(node, (TableScan, IndexScan)):
                 schema = self._schema(node.table, schemas)
-                output = [_BoundColumn(node.table, col, (node.table,)) for col in schema.columns]
+                name = node.table
+                if node.alias is not None:
+                    if not isinstance(node.alias, str) or not node.alias.strip():
+                        raise SemanticError("Alias tabel tidak valid", node.table)
+                    name = node.alias
+                output = [_BoundColumn(name, col, (name,)) for col in schema.columns]
                 if isinstance(node, IndexScan):
-                    self._bind_index_scan(node, schema, output)
+                    # metadata index merujuk nama tabel asli, bukan alias
+                    original = [_BoundColumn(node.table, col, (node.table,)) for col in schema.columns]
+                    self._bind_index_scan(node, schema, original)
+            elif isinstance(node, SubqueryScan):
+                output = self._subquery_scan_columns(node, children[0])
+            elif isinstance(node, CreateTable):
+                self._bind_create_table(node.schema, schemas)
+                output = []
+            elif isinstance(node, DropTable):
+                self._schema(node.table, schemas)
+                if type(node.cascade) is not bool:
+                    raise SemanticError("Opsi CASCADE pada DROP TABLE tidak valid", node.table)
+                output = []
             elif isinstance(node, (Insert, Update, Delete, CreateIndex)):
                 self._bind_write(node, children, schemas)
                 output = []
             elif isinstance(node, Join):
                 left, right = children
                 if _source_tables(node.children[0]) & _source_tables(node.children[1]):
-                    raise SemanticError("Tabel berulang membutuhkan alias yang belum didukung")
+                    raise SemanticError("Tabel berulang membutuhkan alias berbeda")
                 output = left + right
                 if node.kind is JoinKind.THETA:
                     self._bind_condition(node.condition, output)
@@ -116,10 +134,16 @@ class Binder:
                     self._bind_condition(node.condition, output)
                 elif isinstance(node, Sort):
                     self._resolve(node.column, output)
+                elif isinstance(node, Limit):
+                    if type(node.count) is not int or node.count < 0:
+                        raise SemanticError("Nilai LIMIT harus bilangan bulat tidak negatif")
                 elif isinstance(node, Project):
                     if not node.columns:
+                        if node.aliases:
+                            raise SemanticError("Alias kolom tidak bisa dipakai dengan SELECT *")
                         node.columns = [col.ref() for col in output]
                     output = [self._resolve(ref, output) for ref in node.columns]
+                    self._check_aliases(node)
             node.output_columns = [col.ref() for col in output]
             return output
         finally:
@@ -239,8 +263,8 @@ class Binder:
         active.add(id(expr))
         try:
             if isinstance(expr, Comparison) and isinstance(expr.op, CompOp):
-                left = self._bind_value(expr.left, scope, active)
-                right = self._bind_value(expr.right, scope, active)
+                left = self._bind_operand(expr.left, scope, active)
+                right = self._bind_operand(expr.right, scope, active)
                 if not _compatible(left, right):
                     raise SemanticError("Tipe operand perbandingan tidak kompatibel")
             elif isinstance(expr, And) and expr.conditions:
@@ -278,9 +302,102 @@ class Binder:
                 if left not in _NUMERIC or right not in _NUMERIC:
                     raise SemanticError("Operasi aritmetika hanya menerima angka")
                 return DataType.FLOAT if DataType.FLOAT in (left, right) else DataType.INTEGER
+            if isinstance(expr, Subquery):
+                raise SemanticError("Subquery hanya boleh menjadi operand langsung perbandingan di kondisi")
             raise SemanticError(f"Ekspresi '{type(expr).__name__}' tidak didukung")
         finally:
             active.remove(id(expr))
+
+    def _bind_operand(
+        self, expr: Expression, scope: list[_BoundColumn], active: set[int],
+    ) -> DataType:
+        """Operand perbandingan: ekspresi biasa atau subquery skalar."""
+        if not isinstance(expr, Subquery):
+            return self._bind_value(expr, scope, active)
+        if type(expr.plan) not in _ROW_NODES:
+            raise SemanticError("Subquery harus berupa query SELECT")
+        # scope luar tidak diteruskan karena subquery tidak boleh berkorelasi
+        output = self._bind_plan(expr.plan, {}, set())
+        if len(output) != 1:
+            raise SemanticError("Subquery di kondisi harus menghasilkan tepat satu kolom")
+        return output[0].schema.type
+
+    def _subquery_scan_columns(self, node: SubqueryScan, inner: list[_BoundColumn]) -> list[_BoundColumn]:
+        """Kolom keluaran subquery di FROM, diberi prefix alias subquery."""
+        alias = node.alias
+        if not isinstance(alias, str) or not alias.strip():
+            raise SemanticError("Subquery di FROM wajib memakai alias")
+        names = output_names(node.children[0], [col.schema.name for col in inner])
+        for name in names:
+            if names.count(name) > 1:
+                raise SemanticError(
+                    f"Kolom '{name}' muncul lebih dari sekali di subquery '{alias}', beri alias berbeda", name,
+                )
+        return [_BoundColumn(alias, replace(col.schema, name=name), (alias,)) for col, name in zip(inner, names)]
+
+    def _check_aliases(self, node: Project) -> None:
+        if not node.aliases:
+            return
+        if len(node.aliases) != len(node.columns):
+            raise SemanticError("Jumlah alias kolom tidak sesuai jumlah kolom")
+        for alias in node.aliases:
+            if alias is not None and (not isinstance(alias, str) or not alias.strip()):
+                raise SemanticError("Alias kolom tidak valid")
+
+    def _table_exists(self, table: str) -> bool:
+        assert self._catalog is not None
+        try:
+            self._catalog.get_schema(table)
+        except SemanticError:
+            return False
+        return True
+
+    def _bind_create_table(self, schema: TableSchema, schemas: dict[str, TableSchema]) -> None:
+        """Validasi skema CREATE TABLE. Kolom primary key dijadikan NOT NULL."""
+        name = schema.name
+        if not isinstance(name, str) or not name.strip():
+            raise SemanticError("Nama tabel tidak valid")
+        if self._table_exists(name):
+            raise SemanticError(f"Tabel '{name}' sudah ada", name)
+        if not schema.columns:
+            raise SemanticError("Tabel minimal punya satu kolom", name)
+
+        names: list[str] = []
+        for col in schema.columns:
+            if not isinstance(col.name, str) or not col.name.strip():
+                raise SemanticError("Nama kolom tidak valid", name)
+            if col.name in names:
+                raise SemanticError(f"Kolom '{col.name}' didefinisikan lebih dari sekali", col.name)
+            names.append(col.name)
+            if not isinstance(col.type, DataType):
+                raise SemanticError(f"Tipe kolom '{col.name}' tidak dikenal", col.name)
+            if col.type in _TEXT:
+                if type(col.length) is not int or col.length <= 0:
+                    raise SemanticError(f"Panjang kolom '{col.name}' harus bilangan bulat positif", col.name)
+            elif col.length is not None:
+                raise SemanticError(f"Panjang hanya berlaku untuk CHAR/VARCHAR ('{col.name}')", col.name)
+
+        pk = schema.primary_key
+        for key in pk:
+            if key not in names:
+                raise SemanticError(f"Kolom primary key '{key}' tidak ada di tabel", key)
+            if pk.count(key) > 1:
+                raise SemanticError(f"Kolom primary key '{key}' ditulis lebih dari sekali", key)
+        schema.columns = [replace(col, nullable=False) if col.name in pk else col for col in schema.columns]
+
+        by_name = {col.name: col for col in schema.columns}
+        for fk in schema.foreign_keys:
+            if fk.column not in by_name:
+                raise SemanticError(f"Kolom foreign key '{fk.column}' tidak ada di tabel", fk.column)
+            target = schema if fk.ref_table == name else self._schema(fk.ref_table, schemas)
+            ref = next((col for col in target.columns if col.name == fk.ref_column), None)
+            if ref is None:
+                ref_name = f"{fk.ref_table}.{fk.ref_column}"
+                raise SemanticError(f"Kolom rujukan '{ref_name}' tidak ditemukan", ref_name)
+            if ref.type is not by_name[fk.column].type:
+                raise SemanticError(
+                    f"Tipe kolom foreign key '{fk.column}' tidak sama dengan kolom rujukan", fk.column,
+                )
 
 
 def bind_query(query: ParsedQuery, catalog: StorageManager | None = None) -> ParsedQuery:

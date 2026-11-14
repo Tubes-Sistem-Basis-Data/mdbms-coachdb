@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from common.catalog import DataType
 from common.expression import (
-    And, ArithOp, BinaryOp, ColumnRef, Comparison, CompOp, Expression, Literal,
+    And, ArithOp, BinaryOp, ColumnRef, Comparison, CompOp, Expression, Literal, Subquery,
 )
 from query_optimizer.lexer import TokenType
 
 if TYPE_CHECKING:
+    from common.plan import ParsedQuery
     from query_optimizer.lexer import TokenStream
 
 
@@ -23,6 +24,13 @@ _MUL_OPS: dict[str, ArithOp] = {"*": ArithOp.MUL, "/": ArithOp.DIV}
 
 
 class ExpressionParser:
+    def __init__(self) -> None:
+        self._subquery_parser: Callable[["TokenStream"], "ParsedQuery"] | None = None
+
+    def set_subquery_parser(self, parser: Callable[["TokenStream"], "ParsedQuery"]) -> None:
+        """Pasang parser SELECT untuk subquery `(SELECT ...)`. Dipanggil ParserDispatcher."""
+        self._subquery_parser = parser
+
     def parse_condition(self, tokens: "TokenStream") -> Expression:
         """Mengenali kondisi WHERE, beberapa kondisi digabung dengan AND"""
         conditions = [self._parse_comparison(tokens)]
@@ -93,11 +101,22 @@ class ExpressionParser:
                 return ColumnRef(tok.value, kolom.value)
             return ColumnRef(None, tok.value)
         if tok.type == TokenType.LPAREN:
+            if tokens.peek(1).type == TokenType.KEYWORD and tokens.peek(1).value == "SELECT":
+                return self._parse_subquery(tokens)
             tokens.advance()
             inner = self.parse_expression(tokens)
             tokens.expect(TokenType.RPAREN, ")")
             return inner
         tokens.error("diharapkan kolom, nilai konstan, atau '('")
+
+    def _parse_subquery(self, tokens: "TokenStream") -> Subquery:
+        """Mengenali subquery skalar `(SELECT ...)`"""
+        if self._subquery_parser is None:
+            tokens.error("subquery tidak didukung di sini", tokens.peek(1))
+        tokens.advance()
+        plan = self._subquery_parser(tokens).plan
+        tokens.expect(TokenType.RPAREN, ")")
+        return Subquery(plan)
 
     @staticmethod
     def _at_op(tokens: "TokenStream", ops: dict) -> bool:

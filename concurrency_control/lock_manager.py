@@ -140,6 +140,23 @@ class LockManager(ConcurrencyProtocol):
         with self._mutex:
             return {res: self._locks[res].granted[tx_id] for res in self._held.get(tx_id, ())}
 
+    def is_victim(self, tx_id: int) -> bool:
+        with self._mutex:
+            return tx_id in self._victims
+
+    def cancel_wait(self, tx_id: int) -> None:
+        # Berhenti antre, tapi lock yang sudah didapat tetap ditahan sampai on_finish.
+        with self._mutex:
+            resource = self._waiting.get(tx_id)
+            if resource is None:
+                return
+            entry = self._locks[resource]
+            self._dequeue(tx_id, resource, entry)
+            if not entry.granted and not entry.queue:
+                del self._locks[resource]
+            self._detector.graph.set_waits(tx_id, set())
+            self._refresh_waits()
+
     def _plan(self, tx_id: int, resource: ResourceId, action: Action) -> list[tuple[ResourceId, LockMode]]:
         # Urutan lock dari atas ke bawah: intention di tabel dulu, baru baris
         leaf_mode = LockMode.S if action is Action.READ else LockMode.X

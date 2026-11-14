@@ -136,8 +136,7 @@ class TestScanCost(CostCase):
         for column, expected_rows in (("id", 1.0), ("group_id", 10.0)):
             node = IndexScan(table="r", index=IndexInfo("idx", "r", column), op=CompOp.EQ, key=1)
             with self.subTest(column=column):
-                # Belum memodelkan traversal index M3: gunakan biaya scan konservatif.
-                self.assertEqual(self.model.get_cost(node), 100.0)
+                self.assertEqual(self.model.get_cost(node), 1.0)
                 self.assertEqual(node.estimated_rows, expected_rows)
 
     def test_empty_index_scan_never_invents_one_matching_row(self) -> None:
@@ -148,12 +147,12 @@ class TestScanCost(CostCase):
 
     def test_range_index_scan_uses_shared_range_heuristic(self) -> None:
         node = IndexScan(table="r", index=IndexInfo("idx", "r", "id"), op=CompOp.GT, low=100)
-        self.assertEqual(self.model.get_cost(node), 100.0)
+        self.assertEqual(self.model.get_cost(node), 9.0)
         self.assertAlmostEqual(node.estimated_rows, 1000 / 3)
 
     def test_bounded_index_range_keeps_both_predicates(self) -> None:
         node = IndexScan(table="r", index=IndexInfo("idx", "r", "id"), op=CompOp.GE, low=100, high=200)
-        self.assertEqual(self.model.get_cost(node), 100.0)
+        self.assertEqual(self.model.get_cost(node), 3.0)
         self.assertAlmostEqual(node.estimated_rows, 1000 / 9)
 
     def test_invalid_index_scan_definition_is_rejected(self) -> None:

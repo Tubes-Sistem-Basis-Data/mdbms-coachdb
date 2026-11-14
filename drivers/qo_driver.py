@@ -5,6 +5,7 @@ Contoh:
     python -m drivers.qo_driver --sql "SELECT * FROM student;"
     python -m drivers.qo_driver --file query.sql     # banyak query dipisah ';'
     python -m drivers.qo_driver -i                   # mode interaktif
+    python -m drivers.qo_driver --no-catalog         # katalog contoh tanpa Storage Manager
 """
 
 from __future__ import annotations
@@ -15,7 +16,8 @@ import sys
 from dataclasses import dataclass, field
 
 from common import config
-from common.errors import MdbmsError, QuerySyntaxError, SemanticError
+from common.catalog import ColumnSchema, DataType, ForeignKey, TableSchema, TableStats
+from common.errors import MdbmsError, QuerySyntaxError, SemanticError, TableNotFoundError
 from common.interfaces import QueryOptimizer
 from common.plan import ParsedQuery
 from query_optimizer.plan_printer import render_plan
@@ -159,12 +161,59 @@ def split_queries(text: str) -> list[str]:
     return [q.strip() + ";" for q in text.split(";") if q.strip()]
 
 
+class SampleCatalog:
+    """Katalog dan statistik contoh in-memory supaya driver bisa jalan tanpa SM.
+
+    Hanya menyediakan method yang dipakai QO: list_tables, get_schema, get_stats.
+    Skema mengikuti SAMPLE_QUERIES (student, course, enrollment).
+    """
+
+    def __init__(self) -> None:
+        def col(name: str, kind: DataType, length: int | None = None, nullable: bool = True) -> ColumnSchema:
+            return ColumnSchema(name, kind, length, nullable)
+
+        self._schemas = {
+            "student": TableSchema("student", [
+                col("id", DataType.INTEGER, nullable=False), col("name", DataType.VARCHAR, 50),
+                col("gpa", DataType.FLOAT),
+            ], primary_key=["id"]),
+            "course": TableSchema("course", [
+                col("id", DataType.INTEGER, nullable=False), col("name", DataType.VARCHAR, 60),
+                col("credits", DataType.INTEGER),
+            ], primary_key=["id"]),
+            "enrollment": TableSchema("enrollment", [
+                col("student_id", DataType.INTEGER, nullable=False),
+                col("course_id", DataType.INTEGER, nullable=False), col("grade", DataType.FLOAT),
+            ], primary_key=["student_id", "course_id"], foreign_keys=[
+                ForeignKey("student_id", "student", "id"), ForeignKey("course_id", "course", "id"),
+            ]),
+        }
+        self._stats = {
+            "student": TableStats("student", 1000, 25, 62.0, 40, {"id": 1000, "name": 990, "gpa": 200}),
+            "course": TableStats("course", 50, 2, 72.0, 30, {"id": 50, "name": 50, "credits": 3}),
+            "enrollment": TableStats("enrollment", 5000, 30, 16.0, 170,
+                                     {"student_id": 1000, "course_id": 50, "grade": 40}),
+        }
+
+    def list_tables(self) -> list[str]:
+        return list(self._schemas)
+
+    def get_schema(self, table: str) -> TableSchema:
+        if table not in self._schemas:
+            raise TableNotFoundError(f"Tabel tidak ditemukan: {table}", table)
+        return self._schemas[table]
+
+    def get_stats(self, table: str) -> TableStats:
+        self.get_schema(table)
+        return self._stats[table]
+
+
 def build_optimizer(data_dir: str | None) -> QueryOptimizer:
     """Buat QueryOptimizerFacade. Dengan data_dir, katalog diambil dari Storage Manager asli."""
     from query_optimizer import QueryOptimizerFacade
 
     if data_dir is None:
-        return QueryOptimizerFacade(None)
+        return QueryOptimizerFacade(SampleCatalog())
     from storage_manager.facade import StorageManager
 
     return QueryOptimizerFacade(StorageManager(data_dir))
@@ -177,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
     sumber.add_argument("--file", help="jalankan query dari file, dipisah ';'")
     sumber.add_argument("-i", "--interactive", action="store_true", help="mode interaktif")
     parser.add_argument("--data-dir", default=config.DATA_DIR, help="direktori data Storage Manager")
-    parser.add_argument("--no-catalog", action="store_true", help="jalankan tanpa Storage Manager")
+    parser.add_argument("--no-catalog", action="store_true", help="pakai katalog contoh in-memory, tanpa Storage Manager")
     args = parser.parse_args(argv)
 
     driver = QODriver(build_optimizer(None if args.no_catalog else args.data_dir))

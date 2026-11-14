@@ -7,7 +7,7 @@ import threading
 import time
 from pathlib import Path
 
-from common.errors import LogError
+from common.errors import LogError, LogWriteError
 from common.log import LogKind, LogRecord, RecoveryTarget
 from common.storage import RID
 from common.transaction import ChangeOp, DataChange
@@ -39,6 +39,9 @@ class WalLogger(LogWriter, LogFlusher):
                 raise LogError("penulis log sudah ditutup")
             record.lsn = self.next_lsn
             record.timestamp = time.time()
+            record.prev_lsn = (
+                self._prev.get(record.tx_id, -1) if record.tx_id is not None else -1
+            )
             data = codec.serialize(record)
             if data is None:
                 raise LogError(f"record LSN {record.lsn} tidak bisa diserialisasi")
@@ -47,7 +50,9 @@ class WalLogger(LogWriter, LogFlusher):
                 # flush tanpa fsync: cukup supaya pembaca lain melihat barisnya
                 self._file.flush()
             except OSError as exc:
-                raise LogError(f"gagal menulis log LSN {record.lsn}: {exc}") from exc
+                raise LogWriteError(
+                    f"gagal menulis log LSN {record.lsn}: {exc}"
+                ) from exc
             self.next_lsn += 1
             if record.tx_id is not None:
                 self._prev[record.tx_id] = record.lsn
@@ -105,12 +110,12 @@ class WalLogger(LogWriter, LogFlusher):
 
     def _persist(self, lsn: int) -> None:
         if self._file is None:
-            raise LogError(f"penulis log sudah ditutup, flush LSN {lsn} gagal")
+            raise LogWriteError(f"penulis log sudah ditutup, flush LSN {lsn} gagal")
         try:
             self._file.flush()
             os.fsync(self._file.fileno())
         except (OSError, ValueError) as exc:
-            raise LogError(f"gagal flush log sampai LSN {lsn}: {exc}") from exc
+            raise LogWriteError(f"gagal flush log sampai LSN {lsn}: {exc}") from exc
         # batasi ke lsn tertinggi yang benar-benar sudah tertulis, supaya
         # flush(50) saat baru ada LSN 1 tidak menandai LSN 2..50 sebagai permanen
         self._flushed_lsn = max(self._flushed_lsn, min(lsn, self.next_lsn - 1))
@@ -150,5 +155,4 @@ class WalLogger(LogWriter, LogFlusher):
         return self.append(LogRecord(LogKind.CHECKPOINT_END))
 
     def log_restore(self, target: RecoveryTarget) -> int:
-        # LogKind belum punya RESTORE; kebutuhan PITR ditentukan di FR-05.
-        return 0
+        return self.append(LogRecord(LogKind.RESTORE))

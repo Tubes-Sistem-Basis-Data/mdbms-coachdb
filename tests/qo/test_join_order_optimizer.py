@@ -6,16 +6,14 @@ import unittest
 from unittest.mock import create_autospec
 
 from common.catalog import ColumnSchema, DataType, IndexInfo, TableSchema, TableStats
-from common.expression import ColumnRef, Comparison, CompOp
+from common.expression import And, ColumnRef, Comparison, CompOp
 from common.interfaces import StorageManager
 from common.plan import Filter, IndexScan, Join, JoinKind, PlanNode, Project, TableScan
 from query_optimizer.cost_model import CostModel
 from query_optimizer.join_order_optimizer import JoinOrderOptimizer
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# helper
 
 def _scan(table: str) -> TableScan:
     return TableScan(table=table)
@@ -47,9 +45,7 @@ def _tables(node: PlanNode) -> list[str]:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Fixture: mock StorageManager dengan stats yang bisa dikustomisasi
-# ---------------------------------------------------------------------------
+# StorageManager tiruan dengan stats yang bisa diatur per test
 
 class JoinOrderCase(unittest.TestCase):
     """Base class: 3 tabel r(1000 baris, 100 blok), s(500,50), t(100,10)."""
@@ -76,9 +72,7 @@ class JoinOrderCase(unittest.TestCase):
         return self.opt.reorder(plan, self.model)
 
 
-# ===========================================================================
-# Tes M2 – Commutativity
-# ===========================================================================
+# M2: komutatif
 
 class TestCommutativity(JoinOrderCase):
 
@@ -98,7 +92,7 @@ class TestCommutativity(JoinOrderCase):
 
     def test_cross_join_already_optimal_unchanged(self) -> None:
         """Jika urutan awal sudah optimal, optimizer tidak perlu menukar."""
-        plan = _cross(_scan("s"), _scan("r"))   # s lebih kecil → sudah optimal
+        plan = _cross(_scan("s"), _scan("r"))   # s lebih kecil, jadi sudah optimal
         result = self.reorder(plan)
         self.assertEqual(_tables(result)[0], "s")
 
@@ -135,14 +129,12 @@ class TestCommutativity(JoinOrderCase):
         self.assertEqual(_tables(result)[0], "s")
 
 
-# ===========================================================================
-# Tes M3 – Associativity
-# ===========================================================================
+# M3: asosiatif
 
 class TestAssociativity(JoinOrderCase):
 
     def test_left_deep_to_right_deep_when_cheaper(self) -> None:
-        """Join(Join(r,s),t) → Join(r,Join(s,t)) jika lebih murah."""
+        """Join(Join(r,s),t) jadi Join(r,Join(s,t)) kalau lebih murah."""
         # Karena t sangat kecil (10 blok), menaruhnya di dalam sering lebih murah.
         plan = _cross(_cross(_scan("r"), _scan("s")), _scan("t"))
         result = self.reorder(plan)
@@ -186,9 +178,7 @@ class TestAssociativity(JoinOrderCase):
         self.assertIsInstance(result, Join)
 
 
-# ===========================================================================
-# Tes kombinasi M2+M3
-# ===========================================================================
+# kombinasi M2 dan M3
 
 class TestCommuteAndAssociate(JoinOrderCase):
 
@@ -244,9 +234,7 @@ class TestCommuteAndAssociate(JoinOrderCase):
         self.assertIsInstance(result.children[0], Join)
 
 
-# ===========================================================================
 # Tes edge-case
-# ===========================================================================
 
 class TestEdgeCases(JoinOrderCase):
 
@@ -315,6 +303,46 @@ class TestEdgeCases(JoinOrderCase):
         plan = Join(kind=JoinKind.CROSS, children=[r, s], output_columns=[_col("r", "id"), _col("s", "id")])
         result = self.reorder(plan)
         self.assertEqual(result.output_columns, [_col("s", "id"), _col("r", "id")])
+
+    def test_theta_join_associativity_redistributes_predicates(self) -> None:
+        """(r ⋈ s) ⋈ t dengan kondisi theta di-reassociate menjadi (t ⋈ s) ⋈ r yang lebih murah."""
+        cond_rs = _eq(_col("r", "id"), _col("s", "id"))
+        cond_st = _eq(_col("s", "id"), _col("t", "id"))
+        plan = _theta(cond_st, _theta(cond_rs, _scan("r"), _scan("s")), _scan("t"))
+        original_cost = self.model.get_cost(
+            _theta(cond_st, _theta(cond_rs, _scan("r"), _scan("s")), _scan("t"))
+        )
+        result = self.reorder(plan)
+        self.assertIsInstance(result, Join)
+        self.assertEqual(_tables(result), ["t", "s", "r"])
+        self.assertLess(self.model.get_cost(result), original_cost)
+
+    def test_theta_join_compound_and_condition_split_across_joins(self) -> None:
+        """Kondisi AND lintas tabel dipisahkan ke join dalam dan join luar sesuai cakupan tabelnya."""
+        cond_rs = _eq(_col("r", "id"), _col("s", "id"))
+        cond_st = _eq(_col("s", "id"), _col("t", "id"))
+        cond_rt = _eq(_col("r", "group_id"), _col("t", "ref"))
+        plan = _theta(And(conditions=[cond_st, cond_rt]), _theta(cond_rs, _scan("r"), _scan("s")), _scan("t"))
+        original_cost = self.model.get_cost(
+            _theta(And(conditions=[cond_st, cond_rt]), _theta(cond_rs, _scan("r"), _scan("s")), _scan("t"))
+        )
+        result = self.reorder(plan)
+        self.assertCountEqual(_tables(result), ["r", "s", "t"])
+        self.assertLess(self.model.get_cost(result), original_cost)
+        self.assertIsInstance(result.children[0], Join)
+        self.assertEqual(result.children[0].condition, cond_st)
+
+    def test_theta_join_right_deep_reordered(self) -> None:
+        """Join(r, Join(s, t)) dengan kondisi theta dapat direstrukturisasi menjadi lebih murah."""
+        cond_rs = _eq(_col("r", "id"), _col("s", "id"))
+        cond_st = _eq(_col("s", "id"), _col("t", "id"))
+        plan = _theta(cond_rs, _scan("r"), _theta(cond_st, _scan("s"), _scan("t")))
+        original_cost = self.model.get_cost(
+            _theta(cond_rs, _scan("r"), _theta(cond_st, _scan("s"), _scan("t")))
+        )
+        result = self.reorder(plan)
+        self.assertCountEqual(_tables(result), ["r", "s", "t"])
+        self.assertLess(self.model.get_cost(result), original_cost)
 
 
 if __name__ == "__main__":

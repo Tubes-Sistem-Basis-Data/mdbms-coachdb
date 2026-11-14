@@ -46,6 +46,16 @@ class _FakeStatementParser:
         self._consume(tokens)
         return ParsedQuery(sql="", kind=QueryKind.CREATE_INDEX)
 
+    def parse_create_table(self, tokens: TokenStream) -> ParsedQuery:
+        self.calls.append("create_table")
+        self._consume(tokens)
+        return ParsedQuery(sql="", kind=QueryKind.CREATE_TABLE)
+
+    def parse_drop_table(self, tokens: TokenStream) -> ParsedQuery:
+        self.calls.append("drop_table")
+        self._consume(tokens)
+        return ParsedQuery(sql="", kind=QueryKind.DROP_TABLE)
+
     def parse_transaction(self, tokens: TokenStream) -> ParsedQuery:
         self.calls.append("transaction")
         kata = self._consume(tokens)[0]
@@ -105,12 +115,21 @@ class TestPemilihanParser(_DispatcherTestCase):
         self.assertEqual(self.parse("select * from student").kind, QueryKind.SELECT)
         self.assertEqual(self.parse("commit;").command, TransactionCommand.COMMIT)
 
+    def test_create_table_dan_create_index(self) -> None:
+        self.assertEqual(self.parse("CREATE TABLE t (a INTEGER);").kind, QueryKind.CREATE_TABLE)
+        self.assertEqual(self.parse("CREATE INDEX i ON t(a);").kind, QueryKind.CREATE_INDEX)
+        self.assertEqual(self.stmt.calls, ["create_table", "create_index"])
+
+    def test_drop_table(self) -> None:
+        self.assertEqual(self.parse("DROP TABLE t;").kind, QueryKind.DROP_TABLE)
+        self.assertEqual(self.stmt.calls, ["drop_table"])
+
     def test_keyword_bukan_awal_perintah(self) -> None:
         self.assert_error("FROM student;", "pernyataan tidak dikenal")
 
     def test_identifier_di_awal(self) -> None:
-        err = self.assert_error("DROP TABLE student;", "pernyataan tidak dikenal")
-        self.assertEqual(err.token, "DROP")
+        err = self.assert_error("TRUNCATE student;", "pernyataan tidak dikenal")
+        self.assertEqual(err.token, "TRUNCATE")
         self.assertEqual(err.position, 0)
 
 
@@ -137,8 +156,9 @@ class TestAkhirQuery(_DispatcherTestCase):
         self.assertEqual(err.token, "SELECT")
 
     def test_sisa_token_tanpa_titik_koma(self) -> None:
-        err = self.assert_error("SELECT * FROM a b", "token tidak terduga setelah akhir query")
-        self.assertEqual(err.token, "b")
+        # 'b' dibaca sebagai alias tabel, jadi sisa token dimulai dari 'c'
+        err = self.assert_error("SELECT * FROM a b c", "token tidak terduga setelah akhir query")
+        self.assertEqual(err.token, "c")
 
 
 class TestSql(_DispatcherTestCase):

@@ -4,7 +4,7 @@ from common.errors import LogWriteError
 from common.interfaces import FailureRecoveryManager
 from common.log import LogKind, LogRecord
 from common.storage import RID
-from common.transaction import ChangeOp, DataChange, TxResult, TxStatus
+from common.transaction import ChangeOp, DataChange, TxResult
 
 
 class FrmBridge:
@@ -56,7 +56,8 @@ class AbortCoordinator:
         self._bridge = bridge
 
     def abort(self, tx_id: int) -> TxResult:
-        return TxResult(tx_id=tx_id, status=TxStatus.ABORTED, ok=False)
+        # FRM sudah menulis dan flush ABORT_REQUEST dan ABORT saat rollback.
+        return self._bridge.rollback(tx_id)
 
     def mark_victim(self, tx_id: int) -> None:
         return None

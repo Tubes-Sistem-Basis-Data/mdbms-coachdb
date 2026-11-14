@@ -6,7 +6,7 @@ import json
 import os
 import tempfile
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from common.errors import LogError
@@ -77,40 +77,104 @@ class CheckpointStore(CheckpointQueryInterface):
                 raise LogError("Metadata checkpoint tidak valid")
             return metadata
 
+    def _write_atomic(self, path: Path, payload: dict, label: str) -> None:
+        temporary = None
+        try:
+            directory = path.resolve().parent
+            directory.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=directory,
+                prefix=".checkpoint-", suffix=".tmp", delete=False,
+            ) as stream:
+                temporary = stream.name
+                json.dump(payload, stream, ensure_ascii=False)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        except (OSError, TypeError, ValueError, AttributeError) as exc:
+            raise LogError(f"Gagal menyimpan {label}: {exc}") from exc
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
+
     def write_master_atomic(self, metadata: CheckpointMeta) -> None:
         """Persistenkan metadata lalu ganti master secara atomik."""
-        temporary = None
         with self._lock:
-            try:
-                payload = _to_dict(metadata)
-                if _from_dict(payload) is None:
-                    raise ValueError("metadata tidak valid")
-                directory = Path(self.master_path).resolve().parent
-                directory.mkdir(parents=True, exist_ok=True)
-                with tempfile.NamedTemporaryFile(
-                    mode="w", encoding="utf-8", dir=directory,
-                    prefix=".checkpoint-", suffix=".tmp", delete=False,
-                ) as stream:
-                    temporary = stream.name
-                    json.dump(payload, stream, ensure_ascii=False)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.replace(temporary, self.master_path)
-            except (OSError, TypeError, ValueError, AttributeError) as exc:
-                raise LogError(f"Gagal menyimpan metadata checkpoint: {exc}") from exc
-            finally:
-                if temporary is not None:
-                    try:
-                        os.unlink(temporary)
-                    except OSError:
-                        pass
+            payload = _to_dict(metadata)
+            if _from_dict(payload) is None:
+                raise LogError("Gagal menyimpan metadata checkpoint: metadata tidak valid")
+            self._write_atomic(Path(self.master_path), payload, "metadata checkpoint")
+
+    def write_snapshot_metadata(self, metadata: CheckpointMeta) -> None:
+        """Simpan metadata checkpoint sebagai arsip snapshot."""
+        with self._lock:
+            payload = _to_dict(metadata)
+            if _from_dict(payload) is None:
+                raise LogError("Gagal menyimpan metadata snapshot: metadata tidak valid")
+            path = Path(self.snapshot_dir) / f"checkpoint-{metadata.checkpoint_lsn}.json"
+            self._write_atomic(path, payload, "metadata snapshot")
+
+    def snapshot_path(self, checkpoint_lsn: int) -> str:
+        """Path snapshot untuk checkpoint pada LSN tertentu."""
+        if type(checkpoint_lsn) is not int or checkpoint_lsn < 1:
+            raise ValueError("LSN checkpoint harus bilangan bulat positif")
+        return str(Path(self.snapshot_dir) / f"checkpoint-{checkpoint_lsn}.snap")
 
     def find_latest_completed(self) -> CheckpointMeta | None:
         metadata = self.read_master()
         return metadata if metadata is not None and metadata.completed else None
 
     def find_snapshot_before(self, target: RecoveryTarget) -> CheckpointMeta | None:
-        return None
+        """Snapshot selesai terbaru yang berada pada atau sebelum target."""
+        with self._lock:
+            candidates = []
+            metadata = self.read_master()
+            if metadata is not None:
+                candidates.append(metadata)
+
+            directory = Path(self.snapshot_dir)
+            if directory.is_dir():
+                for path in directory.glob("*.json"):
+                    try:
+                        payload = json.loads(path.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        continue
+                    archived = _from_dict(payload)
+                    if archived is not None:
+                        candidates.append(archived)
+
+            matched = [
+                candidate for candidate in candidates
+                if self._matches(candidate, target)
+            ]
+            if not matched:
+                return None
+            return max(
+                matched,
+                key=lambda candidate: (
+                    candidate.checkpoint_lsn,
+                    self._timestamp(candidate),
+                ),
+            )
 
     def _matches(self, metadata: CheckpointMeta | None, target: RecoveryTarget) -> bool:
+        if metadata is None or not metadata.completed or not metadata.snapshot_path:
+            return False
+        if target.tx_id is not None:
+            return (
+                metadata.max_tx_id <= target.tx_id
+                or target.tx_id in metadata.active_tx
+            )
+        if target.timestamp is not None:
+            return self._timestamp(metadata) <= target.timestamp
         return False
+
+    @staticmethod
+    def _timestamp(metadata: CheckpointMeta) -> float:
+        timestamp = metadata.timestamp
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        return timestamp.timestamp()
