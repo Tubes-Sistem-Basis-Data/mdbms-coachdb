@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from common.catalog import ColumnSchema, DataType, TableSchema
-from storage_manager.errors import SchemaViolationError
+from storage_manager.errors import SchemaViolationError, StorageError
 from storage_manager.serializer import RecordCodec
 from storage_manager.types import Value
 
@@ -86,6 +86,18 @@ class TestRecordCodecSM02(unittest.TestCase):
         with self.assertRaises(ValueError):
             RecordCodec._fixed_size(ColumnSchema("v", DataType.VARCHAR, length=20))
 
+    def test_decode_standalone_rejects_bad_input(self):
+        with self.assertRaises(StorageError):
+            RecordCodec.decode_integer(b"")
+        with self.assertRaises(StorageError):
+            RecordCodec.decode_integer(b"\x00" * 7)
+        with self.assertRaises(StorageError):
+            RecordCodec.decode_float(b"")
+        with self.assertRaises(StorageError):
+            RecordCodec.decode_varchar(b"")
+        with self.assertRaises(StorageError):
+            RecordCodec.decode_varchar(b"\x00\x05ab")  # prefix 5 > sisa 2 byte
+
 
 class TestRecordCodecSM03(unittest.TestCase):
     """Test SM-03: serialisasi record."""
@@ -126,10 +138,30 @@ class TestRecordCodecSM03(unittest.TestCase):
         # 1 byte bitmap + 8 (id) + (2+1) + (2+5) = 19
         self.assertEqual(len(encoded), 19)
 
+    def test_encode_decode_varchar_not_last(self):
+        # VARCHAR di tengah schema (bukan kolom terakhir)
+        schema = TableSchema(
+            "t",
+            columns=[
+                ColumnSchema("id", DataType.INTEGER, nullable=False),
+                ColumnSchema("name", DataType.VARCHAR, length=20),
+                ColumnSchema("gpa", DataType.FLOAT),
+            ],
+        )
+        values: tuple[Value, ...] = (1, "Alice", 3.5)
+        encoded = RecordCodec.encode(schema, values)
+        self.assertEqual(RecordCodec.decode(schema, encoded), values)
+
     def test_validate_ok(self):
         values: tuple[Value, ...] = (1, "abc", 3.14, "tag")
         result = RecordCodec.validate(self.schema, values)
         self.assertEqual(result, values)
+
+    def test_validate_normalizes_float(self):
+        # int pada kolom FLOAT dinormalisasi menjadi float.
+        result = RecordCodec.validate(self.schema, (1, "abc", 3, "tag"))
+        self.assertEqual(result, (1, "abc", 3.0, "tag"))
+        self.assertIsInstance(result[2], float)
 
     def test_validate_wrong_count(self):
         with self.assertRaises(SchemaViolationError):
@@ -186,7 +218,7 @@ class TestRecordCodecSM03(unittest.TestCase):
         self.assertEqual(decoded, values)
 
     def test_decode_empty_data_rejected(self):
-        with self.assertRaises(ValueError):
+        with self.assertRaises(StorageError):
             RecordCodec.decode(self.schema, b"")
 
     def test_roundtrip_multiple(self):
