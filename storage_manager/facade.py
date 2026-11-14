@@ -9,7 +9,7 @@ from typing import Callable, Iterator
 
 from common import config
 from common.catalog import IndexInfo, TableSchema, TableStats
-from common.errors import StorageError
+from common.errors import IndexDefinitionError, StorageError
 from common.interfaces import StorageManager as StorageManagerBase
 from common.storage import RID, Row
 from storage_manager.buffer import BufferPool
@@ -43,6 +43,7 @@ class StorageManager(StorageManagerBase):
             self._lock, self._buffer, self._catalog, self._index_manager, self._stats
         )
         self._log_flusher: Callable[[int], bool] | None = None
+        self._index_manager.rebuild_all()
 
     # Kontrak StorageManager
 
@@ -107,15 +108,33 @@ class StorageManager(StorageManagerBase):
 
     def create_index(self, info: IndexInfo) -> None:
         """Bangun index dan catat di katalog. Dipanggil QP."""
-        return None
+        with self._lock:
+            self._index_manager.create_index(
+                info.name, info.table, info.column, info.kind
+            )
 
     def index_lookup(self, table: str, column: str, key: Value) -> list[RID]:
         """RID dengan nilai kolom sama dengan `key`. Dipanggil QP."""
-        return []
+        with self._lock:
+            info = self._find_index(table, column)
+            return self._index_manager.lookup(info.name, key)
 
     def index_range(self, table: str, column: str, low: Value, high: Value) -> list[RID]:
         """RID dengan low <= nilai <= high, None berarti tak terbatas. Dipanggil QP."""
-        return []
+        with self._lock:
+            info = self._find_index(table, column)
+            return self._index_manager.range(info.name, low, high)
+
+    def _find_index(self, table: str, column: str) -> IndexInfo:
+        schema = self._catalog.get_table_schema(table)
+        if column not in schema.column_names():
+            raise IndexDefinitionError(
+                f"Kolom {column} tidak ada di tabel {table}"
+            )
+        for info in schema.indexes:
+            if info.column == column:
+                return info
+        raise IndexDefinitionError(f"Index untuk {table}.{column} tidak ditemukan")
 
     def flush(self) -> None:
         """Tulis page dirty ke disk. Dipanggil FRM sebelum checkpoint."""
