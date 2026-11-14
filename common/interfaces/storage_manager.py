@@ -25,6 +25,10 @@ class StorageManager(ABC):
         """Statistik tabel untuk cost model QO."""
 
     @abstractmethod
+    def list_indexes(self, table: str | None = None) -> list[IndexInfo]:
+        """Daftar index, bisa difilter per tabel."""
+
+    @abstractmethod
     def scan(self, table: str) -> Iterator[Row]:
         """Iterasi seluruh baris tabel."""
 
@@ -85,9 +89,25 @@ class StorageManager(ABC):
         """RID dengan low <= nilai <= high. low/high None berarti tak terbatas."""
 
     @abstractmethod
-    def flush(self, page_ids: list[int] | None = None) -> None:
-        """Tulis page dirty ke disk (semua jika None). Memanggil log flusher dulu."""
+    def flush(self) -> None:
+        """Tulis page dirty ke disk. Memanggil log flusher dulu."""
 
     @abstractmethod
     def set_log_flusher(self, fn: Callable[[int], bool]) -> None:
         """Pasang callback `flush_log(page_lsn)` dari FRM. Dipanggil main.py."""
+
+    @abstractmethod
+    def snapshot_to(self, path: str) -> None:
+        """Salin seluruh data ke `path` untuk checkpoint/PITR."""
+
+    @abstractmethod
+    def restore_from(self, path: str) -> None:
+        """Ganti seluruh data dengan snapshot di `path`."""
+
+    @abstractmethod
+    def rebuild_indexes(self) -> None:
+        """Bangun ulang index dan statistik dari isi tabel."""
+
+    @abstractmethod
+    def close(self) -> None:
+        """Flush dan tutup semua file. Aman dipanggil dua kali."""

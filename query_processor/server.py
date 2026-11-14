@@ -4,10 +4,15 @@ import json
 import logging
 import socket
 import threading
+from contextlib import suppress
+from queue import Queue
+from time import monotonic
 
 from common import config
 from common.interfaces import QueryProcessor, Session
 from common.result import ExecutionResult
+from query_processor.cancellation import cancellation_scope
+from query_processor.errors import ExecutionError
 
 logger = logging.getLogger("coachdb.qp")
 
@@ -24,8 +29,10 @@ class QueryServer:
         self._port = port
         self._sock: socket.socket | None = None
         self._running: bool = False
+        self._stopping = threading.Event()
         self._lock = threading.Lock()
         self._client_threads: list[threading.Thread] = []
+        self._connections: dict[socket.socket, threading.Event] = {}
 
     @property
     def port(self) -> int:
@@ -44,6 +51,7 @@ class QueryServer:
         server_sock.settimeout(0.5)
 
         with self._lock:
+            self._stopping.clear()
             self._sock = server_sock
             self._running = True
             self._port = int(server_sock.getsockname()[1])
@@ -72,10 +80,26 @@ class QueryServer:
         conn: socket.socket,
         addr: tuple[str, int] | None = None,
     ) -> None:
-        session: Session = self._qp.open_session()
+        cancelled = threading.Event()
+        with self._lock:
+            if self._stopping.is_set():
+                conn.close()
+                return
+            self._connections[conn] = cancelled
+        session: Session | None = None
+        reader_thread: threading.Thread | None = None
         try:
-            reader = conn.makefile("r", encoding="utf-8")
-            for raw_line in reader:
+            session = self._qp.open_session()
+            requests: Queue[str | None] = Queue()
+            # Pembaca tetap dapat mendeteksi EOF ketika executor menunggu CCM.
+            reader_thread = threading.Thread(
+                target=self._read_requests, args=(conn, requests, cancelled), daemon=True
+            )
+            reader_thread.start()
+            while True:
+                raw_line = requests.get()
+                if raw_line is None or cancelled.is_set():
+                    break
                 line = raw_line.strip()
                 if not line:
                     continue
@@ -111,20 +135,45 @@ class QueryServer:
                     self._send_response(conn, err_res, session.session_id)
                     continue
 
-                result = self._qp.execute_query(sql, session)
+                with cancellation_scope(cancelled.is_set):
+                    result = self._qp.execute_query(sql, session)
+                if cancelled.is_set():
+                    break
                 self._send_response(conn, result, session.session_id)
         except (ConnectionError, OSError):
             logger.debug("Koneksi client %s terputus", addr)
         except Exception:
             logger.exception("Kesalahan tidak terduga pada handler client %s", addr)
         finally:
+            cancelled.set()
+            with suppress(OSError):
+                conn.shutdown(socket.SHUT_RDWR)
+            if reader_thread is not None:
+                reader_thread.join(timeout=1.0)
             try:
-                self._qp.close_session(session.session_id)
+                if session is not None:
+                    self._qp.close_session(session.session_id)
             finally:
-                try:
+                with suppress(OSError):
                     conn.close()
-                except OSError:
-                    pass
+                with self._lock:
+                    self._connections.pop(conn, None)
+
+    @staticmethod
+    def _read_requests(
+        conn: socket.socket, requests: Queue[str | None], cancelled: threading.Event,
+    ) -> None:
+        try:
+            with conn.makefile("r", encoding="utf-8") as reader:
+                for raw_line in reader:
+                    if cancelled.is_set():
+                        break
+                    requests.put(raw_line)
+        except (OSError, UnicodeError):
+            logger.debug("Pembacaan koneksi client terhenti", exc_info=True)
+        finally:
+            cancelled.set()
+            requests.put(None)
 
     @staticmethod
     def _send_response(
@@ -139,12 +188,25 @@ class QueryServer:
 
     def shutdown(self) -> None:
         with self._lock:
+            self._stopping.set()
             self._running = False
             sock = self._sock
             self._sock = None
+            connections = list(self._connections.items())
 
         if sock is not None:
-            try:
+            with suppress(OSError):
                 sock.close()
-            except OSError:
-                pass
+        for conn, cancelled in connections:
+            cancelled.set()
+            with suppress(OSError):
+                conn.shutdown(socket.SHUT_RDWR)
+
+    def wait_closed(self, timeout: float = 5.0) -> None:
+        """Tunggu handler selesai sebelum backend ditutup."""
+        deadline = monotonic() + timeout
+        threads = [thread for thread in self._client_threads if thread is not threading.current_thread()]
+        for thread in threads:
+            thread.join(timeout=max(0.0, deadline - monotonic()))
+        if any(thread.is_alive() for thread in threads):
+            raise ExecutionError("Handler client belum selesai; backend belum boleh ditutup")

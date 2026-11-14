@@ -17,7 +17,8 @@ from common.transaction import (
     DataChange,
     ResourceId,
 )
-from query_processor.errors import ExecutionError
+from query_processor.cancellation import CancelCheck, current_cancel_check
+from query_processor.errors import ExecutionError, QueryCancelledError
 from query_processor.subqueries import ScalarResolver, ScalarValue
 
 
@@ -28,21 +29,28 @@ class ExecContext:
     ccm: ConcurrencyControlManager
     access_intent: Action = Action.READ
     scalar_resolver: ScalarResolver | None = field(default=None, repr=False, compare=False)
+    cancel_check: CancelCheck | None = field(default_factory=current_cancel_check, repr=False, compare=False)
     _scalar_cache: dict[int, tuple[Subquery, ScalarValue]] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
+
+    def check_cancelled(self) -> None:
+        if self.cancel_check is not None and self.cancel_check():
+            raise QueryCancelledError("Eksekusi query dibatalkan")
 
     def resolve_scalar(self, subquery: Subquery) -> ScalarValue:
         if not isinstance(subquery, Subquery):
             raise ExecutionError("Resolver skalar memerlukan Subquery")
         if type(self.tx_id) is not int or self.tx_id <= 0:
             raise ExecutionError("Subquery skalar memerlukan transaksi aktif")
+        self.check_cancelled()
         cached = self._scalar_cache.get(id(subquery))
         if cached is not None:
             return cached[1]
         if self.scalar_resolver is None:
             raise ExecutionError("Resolver subquery skalar belum tersedia")
         result = self.scalar_resolver(subquery)
+        self.check_cancelled()
         # Simpan node agar id-nya tidak dipakai ulang selama statement.
         self._scalar_cache[id(subquery)] = (subquery, result)
         return result
@@ -100,10 +108,12 @@ class ExecContext:
         if not isinstance(resource.table, str) or not resource.table:
             raise ExecutionError("Nama tabel akses tidak valid")
         while True:
+            self.check_cancelled()
             response = self.ccm.validate_object(self.tx_id, resource, action, change)
             if not isinstance(response, AccessResponse):
                 raise ExecutionError("Respons izin akses CCM tidak valid")
             if response.status is AccessStatus.WAIT:
+                self.check_cancelled()
                 sleep(config.WAIT_RETRY_SECONDS)
                 continue
             if response.status is AccessStatus.ABORTED:
@@ -116,4 +126,5 @@ class ExecContext:
                 type(response.lsn) is not int or response.lsn <= 0
             ):
                 raise ExecutionError("Izin WRITE dari CCM tidak menyertakan LSN yang valid")
+            self.check_cancelled()
             return response

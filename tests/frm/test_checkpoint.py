@@ -43,6 +43,7 @@ class CheckpointTestCase(unittest.TestCase):
 class TestCheckpointManual(CheckpointTestCase):
     def test_urutan_wal_data_dan_penanda_selesai(self):
         trace = Mock()
+        self.sm.snapshot_to = None
         self.store.write_master_atomic = Mock(wraps=self.store.write_master_atomic)
         for name, method in (
             ("pause", self.ccm.pause_new_transactions),

@@ -124,6 +124,12 @@ class CheckpointManager(CheckpointInterface):
         snapshot_to(path)
         return path
 
+    def _rebuild_indexes(self) -> None:
+        """Bangun ulang index setelah PITR jika SM mendukungnya."""
+        rebuild = getattr(self._sm, "rebuild_indexes", None)
+        if callable(rebuild):
+            rebuild()
+
     def restore_to(self, target: RecoveryTarget) -> RestoreResult | None:
         if self._pitr is None:
             return RestoreResult(ok=False, message="PITR belum dipasang")
@@ -141,6 +147,14 @@ class CheckpointManager(CheckpointInterface):
                 return RestoreResult(ok=False, message="PITR tidak menghasilkan status")
             if not restored.ok:
                 return restored
+
+            try:
+                self._rebuild_indexes()
+            except Exception as exc:
+                return RestoreResult(
+                    ok=False,
+                    message=f"{restored.message}; rebuild index gagal: {exc}",
+                )
 
             checkpoint = self._checkpoint_locked()
             if not checkpoint.ok:

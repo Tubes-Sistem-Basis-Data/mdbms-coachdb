@@ -9,3 +9,7 @@ class PlanError(MdbmsError):
 
 class ExecutionError(MdbmsError):
     """Evaluasi ekspresi gagal saat runtime."""
+
+
+class QueryCancelledError(ExecutionError):
+    """Request dibatalkan; transaksi tetap perlu diselesaikan koordinator."""

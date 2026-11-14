@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import inspect
 import json
+import os
 import pickle
 import tempfile
 import unittest
@@ -144,7 +145,13 @@ class TestReturnTypes(unittest.TestCase):
         self.assertIsNone(sm.create_index(IndexInfo("idx_id", "student", "id")))
         self.assertIsInstance(sm.index_lookup("student", "id", 1), list)
         self.assertIsInstance(sm.index_range("student", "id", None, 10), list)
+        self.assertIsInstance(sm.list_indexes("student"), list)
         self.assertIsNone(sm.flush())
+        self.assertIsNone(sm.rebuild_indexes())
+        snapshot = os.path.join(self._tmp.name, "snap")
+        self.assertIsNone(sm.snapshot_to(snapshot))
+        self.assertIsNone(sm.restore_from(snapshot))
+        self.assertIsNone(sm.close())
 
     def test_concurrency_control(self):
         ccm = self.ccm
