@@ -12,6 +12,8 @@ from common.transaction import (
     ChangeOp,
     DataChange,
     ResourceId,
+    TxResult,
+    TxStatus,
 )
 from concurrency_control.frm_bridge import FrmBridge
 from concurrency_control.manager import CCManager
@@ -37,6 +39,9 @@ class _FakeFrm:
     def flush_log(self, up_to_lsn: int) -> bool:
         self.flushed.append(up_to_lsn)
         return not self.fail_flush
+
+    def rollback(self, tx_id: int) -> TxResult:
+        return TxResult(tx_id, TxStatus.ABORTED, ok=True)
 
 
 class FrmBridgeTest(unittest.TestCase):

@@ -54,54 +54,110 @@ class CCManager(ConcurrencyControlManager):
             raise
         return tx.tx_id
 
-    def validate_object(self, tx_id: int, resource: ResourceId, action: Action,change: DataChange | None = None,) -> AccessResponse:
+    def validate_object(
+        self, tx_id: int, resource: ResourceId, action: Action, change: DataChange | None = None,
+    ) -> AccessResponse:
         if action is Action.WRITE and change is None:
             raise ValueError(f"T{tx_id}: WRITE ke {resource.table} wajib menyertakan DataChange")
         with self._mutex:
-            tx = self._require_active(tx_id)
-            if tx is None:
-                return AccessResponse(status=AccessStatus.ABORTED, message=f"T{tx_id} tidak aktif")
-            response = self._protocol.request(tx, resource, action)
-            if response.status is not AccessStatus.ALLOWED:
+            tx = self._transactions.get(tx_id)
+        if tx is None:
+            return AccessResponse(AccessStatus.ABORTED, message=f"T{tx_id} tidak aktif")
+
+        # Operasi satu transaksi tidak boleh mendahului log atau rollback transaksi itu.
+        with tx.operation_lock:
+            with self._mutex:
+                if tx.status is not TxStatus.ACTIVE:
+                    if tx.status is TxStatus.FAILED and tx.abort_requested:
+                        raise MdbmsError(f"Rollback T{tx_id} belum selesai")
+                    return AccessResponse(AccessStatus.ABORTED, message=f"T{tx_id} tidak aktif")
+                response = self._protocol.request(tx, resource, action)
+                if response.status is AccessStatus.ALLOWED:
+                    self.schedule.record(tx_id, resource, action)
+            if response.status is AccessStatus.ABORTED:
+                return self._abort_access(tx, response.message)
+            if response.status is AccessStatus.WAIT or change is None or action is Action.READ:
                 return response
-            self.schedule.record(tx_id, resource, action)
-        if action is Action.READ:
-            return response
-        try:
-            lsn = self._bridge.log_write(tx_id, change.op, change.table, change.rid, change.before, change.after)
-        except LogError as exc:
-            self.abort(tx_id)
-            return AccessResponse(
-                status=AccessStatus.ABORTED,
-                message=f"T{tx_id} dibatalkan karena pencatatan log gagal: {exc}",
-            )
-        return AccessResponse(status=AccessStatus.ALLOWED, lsn=lsn)
+            try:
+                lsn = self._bridge.log_write(
+                    tx_id, change.op, change.table, change.rid, change.before, change.after,
+                )
+            except LogError as exc:
+                return self._abort_access(tx, f"T{tx_id} dibatalkan karena pencatatan log gagal: {exc}")
+            return AccessResponse(AccessStatus.ALLOWED, lsn=lsn)
 
     def commit(self, tx_id: int) -> TxResult:
         with self._mutex:
             tx = self._require_active(tx_id)
-            if tx is None:
-                return TxResult(tx_id=tx_id, status=TxStatus.FAILED, ok=False, message=f"T{tx_id} tidak aktif")
-            tx.status = TxStatus.PARTIALLY_COMMITTED
-        try:
-            self._bridge.log_commit(tx_id)
-        except Exception as exc:
+        if tx is None:
+            return TxResult(tx_id, TxStatus.FAILED, ok=False, message=f"T{tx_id} tidak aktif")
+
+        with tx.operation_lock:
             with self._mutex:
-                tx.status = TxStatus.FAILED
-            return TxResult(
-                tx_id=tx_id,
-                status=TxStatus.FAILED,
-                ok=False,
-                message=f"Status commit T{tx_id} tidak pasti, cek setelah restart: {exc}",
-            )
-        with self._mutex:
-            self._finish(tx_id, TxStatus.COMMITTED)
-        return TxResult(tx_id=tx_id, status=TxStatus.COMMITTED, ok=True)
+                if tx.status is not TxStatus.ACTIVE:
+                    return TxResult(tx_id, TxStatus.FAILED, ok=False, message=f"T{tx_id} tidak aktif")
+                victim = False
+                if isinstance(self._protocol, LockManager):
+                    victim = self._protocol.is_victim(tx_id)
+                    if not victim:
+                        self._protocol.cancel_wait(tx_id)
+                if not victim:
+                    tx.status = TxStatus.PARTIALLY_COMMITTED
+            if victim:
+                result = self._abort_transaction(tx)
+                message = f"T{tx_id} korban deadlock"
+                if not result.ok:
+                    message += f". Rollback gagal: {result.message}"
+                return TxResult(tx_id, result.status, ok=False, message=message)
+            try:
+                self._bridge.log_commit(tx_id)
+            except Exception as exc:
+                with self._mutex:
+                    tx.status = TxStatus.FAILED
+                return TxResult(
+                    tx_id=tx_id,
+                    status=TxStatus.FAILED,
+                    ok=False,
+                    message=f"Status commit T{tx_id} tidak pasti, cek setelah restart: {exc}",
+                )
+            with self._mutex:
+                self._finish(tx_id, TxStatus.COMMITTED)
+            return TxResult(tx_id=tx_id, status=TxStatus.COMMITTED, ok=True)
 
     def abort(self, tx_id: int) -> TxResult:
-        # bridge.abort (ABORT_REQUEST, rollback, ABORT + flush), baru lepas lock
-        # lock cuma dilepas kalau rollback berhasil
-        return TxResult(tx_id=tx_id, status=TxStatus.ABORTED, ok=False)
+        with self._mutex:
+            tx = self._transactions.get(tx_id)
+        if tx is None:
+            return TxResult(tx_id, TxStatus.FAILED, ok=False, message=f"T{tx_id} tidak aktif")
+        with tx.operation_lock:
+            return self._abort_transaction(tx)
+
+    def _abort_access(self, tx: Transaction, message: str) -> AccessResponse:
+        result = self._abort_transaction(tx)
+        if not result.ok:
+            raise MdbmsError(f"{message}. Rollback gagal: {result.message}")
+        return AccessResponse(AccessStatus.ABORTED, message=message)
+
+    def _abort_transaction(self, tx: Transaction) -> TxResult:
+        # Pemanggil sudah memegang operation_lock. Lock data ditahan selama undo.
+        with self._mutex:
+            if tx.status is TxStatus.ABORTED:
+                return TxResult(tx.tx_id, TxStatus.ABORTED, ok=True)
+            if tx.status is not TxStatus.ACTIVE and not tx.abort_requested:
+                return TxResult(tx.tx_id, TxStatus.FAILED, ok=False, message=f"T{tx.tx_id} tidak bisa dibatalkan")
+            tx.status = TxStatus.FAILED
+            tx.abort_requested = True
+            if isinstance(self._protocol, LockManager):
+                self._protocol.cancel_wait(tx.tx_id)
+        try:
+            result = self._aborts.abort(tx.tx_id)
+        except (MdbmsError, OSError) as exc:
+            return TxResult(tx.tx_id, TxStatus.FAILED, ok=False, message=str(exc))
+        if not result.ok or result.status is not TxStatus.ABORTED:
+            return TxResult(tx.tx_id, TxStatus.FAILED, ok=False, message=result.message or "rollback gagal")
+        with self._mutex:
+            self._finish(tx.tx_id, TxStatus.ABORTED)
+        return result
 
     def _require_active(self, tx_id: int) -> Transaction | None:
         tx = self._transactions.get(tx_id)

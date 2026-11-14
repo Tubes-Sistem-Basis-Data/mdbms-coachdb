@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, cast
 
 from common.config import WAIT_RETRY_SECONDS
 from common.interfaces import ConcurrencyControlManager, FailureRecoveryManager
-from common.log import LogRecord, LogResult
+from common.log import LogKind, LogRecord, LogResult
 from common.storage import RID
 from common.transaction import (
     AccessStatus,
@@ -24,6 +24,7 @@ from common.transaction import (
     DataChange,
     ProtocolType,
     ResourceId,
+    TxResult,
     TxStatus,
 )
 from concurrency_control.manager import CCManager
@@ -34,7 +35,11 @@ if TYPE_CHECKING:
 
 
 SCENARIO_TIMEOUT_SECONDS = 5.0
-_STEP_PATTERN = re.compile(r"T([1-9][0-9]*)\s+(?:(BEGIN|COMMIT)|([RW])\(([A-Za-z_][A-Za-z0-9_]*)\))")
+_STEP_PATTERN = re.compile(
+    r"T([1-9][0-9]*)\s+(?:(BEGIN|COMMIT|ABORT|ABORTED)|([RW])\(([A-Za-z_][A-Za-z0-9_]*)\))"
+)
+_PROTOCOLS = {"lock": ProtocolType.LOCK_BASED, "timestamp": ProtocolType.TIMESTAMP_BASED}
+_END_STEPS = {"COMMIT", "ABORT", "ABORTED"}
 
 _SAMPLE_SCHEDULES = """
 scenario dua pembaca
@@ -68,6 +73,84 @@ T1 W(A)
 T2 W(A)
 T1 COMMIT
 T2 COMMIT
+end
+
+scenario deadlock dua transaksi
+protocol lock
+expect ALLOWED ALLOWED WAIT ABORTED
+T1 BEGIN
+T2 BEGIN
+T1 W(A)
+T2 W(B)
+T1 W(B)
+T2 W(A)
+T2 ABORTED
+T1 COMMIT
+end
+
+scenario deadlock tiga transaksi
+protocol lock
+expect ALLOWED ALLOWED ALLOWED WAIT WAIT ABORTED
+T1 BEGIN
+T2 BEGIN
+T3 BEGIN
+T1 W(A)
+T2 W(B)
+T3 W(C)
+T1 W(B)
+T2 W(C)
+T3 W(A)
+T3 ABORTED
+T2 COMMIT
+T1 COMMIT
+end
+
+scenario deadlock saat upgrade lock
+protocol lock
+expect ALLOWED ALLOWED WAIT ABORTED
+T1 BEGIN
+T2 BEGIN
+T1 R(A)
+T2 R(A)
+T1 W(A)
+T2 W(A)
+T2 ABORTED
+T1 COMMIT
+end
+
+scenario pembatalan eksplisit
+protocol lock
+expect ALLOWED WAIT
+T1 BEGIN
+T2 BEGIN
+T1 W(A)
+T2 R(A)
+T1 ABORT
+T2 COMMIT
+end
+"""
+
+_TIMESTAMP_SCHEDULES = """
+scenario dua pembaca dengan timestamp
+protocol timestamp
+expect ALLOWED ALLOWED
+T1 BEGIN
+T2 BEGIN
+T1 R(A)
+T2 R(A)
+T1 COMMIT
+T2 COMMIT
+end
+
+scenario pembaca lebih tua dari timestamp tulis
+protocol timestamp
+expect ALLOWED ABORTED
+T1 BEGIN
+T2 BEGIN
+T2 W(A)
+T2 COMMIT
+T1 R(A)
+T1 ABORTED
 end
 """
 
@@ -137,10 +220,11 @@ class ScheduleParser:
     @staticmethod
     def _parse_scenario(name: str, lines: list[tuple[int, str]], end: int) -> Scenario:
         if not lines:
-            raise ValueError(f"baris {end}: metadata 'protocol lock' belum diisi")
+            raise ValueError(f"baris {end}: metadata 'protocol' belum diisi")
         number, protocol = lines[0]
-        if protocol.split() != ["protocol", "lock"]:
-            raise ValueError(f"baris {number}: gunakan 'protocol lock'")
+        parts = protocol.split()
+        if len(parts) != 2 or parts[0] != "protocol" or parts[1] not in _PROTOCOLS:
+            raise ValueError(f"baris {number}: gunakan 'protocol lock' atau 'protocol timestamp'")
         if len(lines) < 2:
             raise ValueError(f"baris {end}: metadata 'expect' belum diisi")
         expect_line, metadata = lines[1]
@@ -158,7 +242,7 @@ class ScheduleParser:
         for number, line in lines[2:]:
             match = _STEP_PATTERN.fullmatch(line)
             if match is None:
-                raise ValueError(f"baris {number}: gunakan BEGIN, R(tabel), W(tabel), atau COMMIT")
+                raise ValueError(f"baris {number}: gunakan BEGIN, R(tabel), W(tabel), COMMIT, ABORT, atau ABORTED")
             tx, lifecycle, access, table = match.groups()
             tx_id = int(tx)
             if lifecycle == "BEGIN":
@@ -168,17 +252,17 @@ class ScheduleParser:
                 active.add(tx_id)
             elif tx_id not in active:
                 raise ValueError(f"baris {number}: T{tx_id} tidak aktif")
-            elif lifecycle == "COMMIT":
+            elif lifecycle in _END_STEPS:
                 active.remove(tx_id)
             steps.append(_Step(tx_id, lifecycle or access, table))
         if not begun:
             raise ValueError(f"baris {end}: tidak ada transaksi")
         if active:
             ids = ", ".join(f"T{tx_id}" for tx_id in sorted(active))
-            raise ValueError(f"baris {end}: transaksi {ids} belum COMMIT")
+            raise ValueError(f"baris {end}: transaksi {ids} belum ditutup dengan COMMIT, ABORT, atau ABORTED")
         if len(expected) != sum(step.table is not None for step in steps):
             raise ValueError(f"baris {expect_line}: jumlah status harus sama dengan jumlah R/W")
-        return Scenario(name, ProtocolType.LOCK_BASED, steps, expected)
+        return Scenario(name, _PROTOCOLS[parts[1]], steps, expected)
 
 
 @dataclass
@@ -197,7 +281,7 @@ class _Attempt:
 
 
 class _MemoryFrm:
-    # Driver hanya memakai write_log dan flush_log melalui FrmBridge.
+    # Driver memakai WAL tiruan. Undo data asli diuji lewat FRM dan SM tiruan.
     def __init__(self) -> None:
         self.records: list[LogRecord] = []
 
@@ -208,6 +292,12 @@ class _MemoryFrm:
 
     def flush_log(self, up_to_lsn: int) -> bool:
         return 0 < up_to_lsn <= len(self.records)
+
+    def rollback(self, tx_id: int) -> TxResult:
+        self.write_log(LogRecord(LogKind.ABORT_REQUEST, tx_id=tx_id))
+        end = self.write_log(LogRecord(LogKind.ABORT, tx_id=tx_id))
+        ok = end.lsn is not None and self.flush_log(end.lsn)
+        return TxResult(tx_id, TxStatus.ABORTED if ok else TxStatus.FAILED, ok=ok)
 
 
 def _make_ccm() -> ConcurrencyControlManager:
@@ -226,9 +316,6 @@ class CCMDriver:
         self.parser = parser if parser is not None else ScheduleParser()
 
     def run(self, scenario: Scenario) -> ScenarioResult:
-        if scenario.protocol is not ProtocolType.LOCK_BASED:
-            raise ValueError("driver M2 hanya mendukung protocol lock")
-
         ccm = self.ccm_factory()
         ccm.set_protocol(scenario.protocol)
         stopped = threading.Event()
@@ -244,6 +331,7 @@ class CCMDriver:
 
         def worker(inbox: Queue[_Command | None]) -> None:
             tx_id: int | None = None
+            aborted = False
             while (command := inbox.get()) is not None and not stopped.is_set():
                 step = command.step
                 try:
@@ -253,14 +341,22 @@ class CCMDriver:
                             attempts.put(_Attempt(step, TxStatus.ACTIVE))
                     elif tx_id is None:
                         raise ValueError(f"{step}: transaksi belum BEGIN")
-                    elif step.kind == "COMMIT":
+                    elif step.kind == "ABORTED":
+                        if not aborted:
+                            raise ValueError(f"{step}: transaksi belum dibatalkan oleh CCM")
+                        attempts.put(_Attempt(step, TxStatus.ABORTED))
+                    elif aborted:
+                        raise ValueError(f"{step}: transaksi sudah dibatalkan, gunakan ABORTED")
+                    elif step.kind in {"COMMIT", "ABORT"}:
+                        commit = step.kind == "COMMIT"
                         with order:
-                            result = ccm.commit(tx_id)
+                            result = ccm.commit(tx_id) if commit else ccm.abort(tx_id)
                             attempts.put(_Attempt(step, result.status))
-                        if not result.ok or result.status is not TxStatus.COMMITTED:
-                            raise ValueError(f"{step}: {result.message or 'commit gagal'}")
+                        expected = TxStatus.COMMITTED if commit else TxStatus.ABORTED
+                        if not result.ok or result.status is not expected:
+                            raise ValueError(f"{step}: {result.message or 'transaksi gagal diselesaikan'}")
                     else:
-                        self._run_access(ccm, tx_id, command, order, attempts, stopped, remaining)
+                        aborted = self._run_access(ccm, tx_id, command, order, attempts, stopped, remaining)
                     if not command.first.done():
                         command.first.set_result(None)
                     command.done.set_result(None)
@@ -305,6 +401,7 @@ class CCMDriver:
         statuses: list[AccessStatus] = []
         schedule = Schedule()
         trace: list[str] = []
+        committed: set[int] = set()
         while True:
             try:
                 attempt = attempts.get_nowait()
@@ -316,7 +413,11 @@ class CCMDriver:
                 statuses.append(attempt.status)
             if attempt.operation is not None:
                 schedule.operations.append(attempt.operation)
-        verdict = self.checker.check(schedule) if self.checker is not None and error is None else None
+            if attempt.status is TxStatus.COMMITTED:
+                committed.add(attempt.step.tx_id)
+        verdict = None
+        if self.checker is not None and error is None:
+            verdict = self.checker.check(Schedule([op for op in schedule.operations if op.tx_id in committed]))
         passed = bool(scenario.steps) and error is None and statuses == scenario.expected
         if verdict is not None:
             passed = passed and verdict.serializable
@@ -331,7 +432,7 @@ class CCMDriver:
         attempts: SimpleQueue[_Attempt],
         stopped: threading.Event,
         remaining: Callable[[], float],
-    ) -> None:
+    ) -> bool:
         step = command.step
         if step.table is None or step.kind not in {"R", "W"}:
             raise ValueError(f"{step}: langkah tidak didukung")
@@ -351,10 +452,8 @@ class CCMDriver:
                 response = ccm.validate_object(tx_id, resource, action, change)
                 operation = Operation(step.tx_id, action, resource) if response.status is AccessStatus.ALLOWED else None
                 attempts.put(_Attempt(step, response.status, retry, operation))
-            if response.status is AccessStatus.ABORTED:
-                raise ValueError(f"{step}: {response.message or 'transaksi dibatalkan'}")
-            if response.status is AccessStatus.ALLOWED:
-                return
+            if response.status is not AccessStatus.WAIT:
+                return response.status is AccessStatus.ABORTED
             if not retry:
                 command.first.set_result(None)
             retry = True
@@ -364,18 +463,20 @@ class CCMDriver:
         return [self.run(scenario) for scenario in self.parser.parse(path)]
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, checker: SerializabilityChecker | None = None) -> int:
     args_parser = argparse.ArgumentParser(
-        description="Jalankan skenario lock CCM untuk Milestone 2",
+        description="Jalankan skenario lock atau timestamp CCM",
         epilog="Contoh format file:\n" + _SAMPLE_SCHEDULES.strip().split("\n\n", 1)[0],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     args_parser.add_argument("--file", help="file skenario. Jika kosong, jalankan contoh bawaan")
+    args_parser.add_argument("--protocol", choices=_PROTOCOLS, default="lock", help="protokol contoh bawaan")
     args = args_parser.parse_args(argv)
 
-    driver = CCMDriver()
+    driver = CCMDriver(checker=checker)
     try:
-        scenarios = driver.parser.parse(args.file) if args.file else driver.parser.parse_text(_SAMPLE_SCHEDULES)
+        samples = _TIMESTAMP_SCHEDULES if args.protocol == "timestamp" else _SAMPLE_SCHEDULES
+        scenarios = driver.parser.parse(args.file) if args.file else driver.parser.parse_text(samples)
     except (OSError, ValueError) as exc:
         print(f"gagal membaca skenario: {exc}", file=sys.stderr)
         return 2
@@ -395,7 +496,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Ekspektasi: {expected}")
         print(f"Respons pertama: {actual}")
         print(f"Jadwal akses: {schedule or '-'}")
-        print("Serializability: BELUM DIPERIKSA")
+        if result.verdict is None:
+            print("Serializability: BELUM DIPERIKSA")
+        elif result.verdict.serializable:
+            serial_order = ", ".join(f"T{tx_id}" for tx_id in result.verdict.serial_order)
+            print(f"Serializability: SERIALIZABLE ({serial_order or '-'})")
+        else:
+            print("Serializability: TIDAK SERIALIZABLE")
         if result.error:
             print(f"Error: {result.error}")
         print(f"Hasil: {'LULUS' if result.passed else 'GAGAL'}")
