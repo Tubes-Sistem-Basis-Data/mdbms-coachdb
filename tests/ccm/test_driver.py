@@ -145,7 +145,7 @@ class CCMDriverTest(unittest.TestCase):
         resource = ResourceId("A", RID("A", 0, 0))
         self.assertEqual(
             result.final_schedule.operations,
-            [Operation(1, Action.WRITE, resource), Operation(2, Action.READ, resource)],
+            [Operation(1, "WRITE", "A", resource.rid), Operation(2, "READ", "A", resource.rid)],
         )
         self.assertIsNone(result.verdict)
 
@@ -195,7 +195,7 @@ class CCMDriverTest(unittest.TestCase):
             path.write_text(conflict("R").replace("expect ALLOWED WAIT", "expect ALLOWED ALLOWED"), encoding="utf-8")
             with redirect_stdout(io.StringIO()) as output:
                 self.assertEqual(main(["--file", str(path)]), 1)
-            self.assertIn("Serializability: BELUM DIPERIKSA", output.getvalue())
+            self.assertIn("Serializability: SERIALIZABLE (T1, T2)", output.getvalue())
             self.assertIn("Hasil: GAGAL", output.getvalue())
 
             path.write_text("rusak", encoding="utf-8")

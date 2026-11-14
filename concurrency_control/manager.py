@@ -121,6 +121,7 @@ class CCManager(ConcurrencyControlManager):
                     message=f"Status commit T{tx_id} tidak pasti, cek setelah restart: {exc}",
                 )
             with self._mutex:
+                self.schedule.record_finish(tx_id, "COMMIT")
                 self._finish(tx_id, TxStatus.COMMITTED)
             return TxResult(tx_id=tx_id, status=TxStatus.COMMITTED, ok=True)
 
@@ -156,6 +157,7 @@ class CCManager(ConcurrencyControlManager):
         if not result.ok or result.status is not TxStatus.ABORTED:
             return TxResult(tx.tx_id, TxStatus.FAILED, ok=False, message=result.message or "rollback gagal")
         with self._mutex:
+            self.schedule.record_finish(tx.tx_id, "ABORT")
             self._finish(tx.tx_id, TxStatus.ABORTED)
         return result
 

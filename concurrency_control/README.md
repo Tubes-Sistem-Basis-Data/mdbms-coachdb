@@ -35,7 +35,9 @@ sebagai korban. Korban menerima `ABORTED` setelah rollback pada permintaan akses
 yang mendeteksi deadlock atau pada retry korban. Lock data korban tetap ditahan
 sampai FRM menyelesaikan rollback dan flush log abort.
 
-`--protocol timestamp` menjalankan contoh CC-08 melalui facade. Contoh konflik
-akan gagal selama `TimestampProtocol` masih stub. Driver menerima pemeriksa
-CC-09 untuk jadwal transaksi yang commit. Tanpa pemeriksa, output menampilkan
-`BELUM DIPERIKSA`.
+`--protocol timestamp` menjalankan contoh CC-08 melalui facade.
+
+Setiap skenario diperiksa dengan `SerializabilityChecker` (CC-09). Pemeriksa
+membangun precedence graph dari operasi transaksi yang commit. Output
+menampilkan `SERIALIZABLE (urutan serial)`, atau `TIDAK SERIALIZABLE` dan
+skenario dianggap gagal.
