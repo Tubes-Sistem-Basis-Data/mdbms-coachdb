@@ -152,6 +152,17 @@ T2 COMMIT
 T1 R(A)
 T1 ABORTED
 end
+
+scenario penulis menunggu tulisan yang belum commit
+protocol timestamp
+expect ALLOWED WAIT
+T1 BEGIN
+T2 BEGIN
+T1 W(A)
+T2 W(A)
+T1 COMMIT
+T2 COMMIT
+end
 """
 
 
