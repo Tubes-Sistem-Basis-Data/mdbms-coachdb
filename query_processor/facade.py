@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import logging
 import re
+from threading import RLock
 
 from common.errors import (
     MdbmsError,
@@ -23,6 +24,7 @@ from common.plan import ParsedQuery, QueryKind, TransactionCommand
 from common.result import ExecutionResult
 from common.transaction import Action
 from query_processor.context import ExecContext
+from query_processor.ddl import DDLCoordinator
 from query_processor.errors import PlanError
 from query_processor.result import ResultFormatter
 from query_processor.session import SessionManager
@@ -36,6 +38,11 @@ _EXPLAIN_ALLOWED_KINDS = {
     QueryKind.SELECT,
     QueryKind.UPDATE,
     QueryKind.DELETE,
+}
+
+_DDL_KINDS = {
+    QueryKind.CREATE_TABLE,
+    QueryKind.DROP_TABLE,
 }
 
 _SHOW_LOG_RE = re.compile(r"^SHOW\s+LOG(?:\s+(\S+))?$", re.IGNORECASE)
@@ -52,10 +59,12 @@ class MetaCommandHandler:
         qo: QueryOptimizer,
         frm: FailureRecoveryManager | None = None,
         ccm: ConcurrencyControlManager | None = None,
+        admin_lock: RLock | None = None,
     ) -> None:
         self._qo = qo
         self._frm = frm
         self._ccm = ccm
+        self._admin_lock = admin_lock or RLock()
 
     def explain(self, parsed: ParsedQuery | str) -> ExecutionResult:
         if isinstance(parsed, str):
@@ -85,17 +94,19 @@ class MetaCommandHandler:
 
     def checkpoint(self, session: Session) -> ExecutionResult:
         self.require_outside_tx(session)
-        if self._frm is None:
-            return ExecutionResult(ok=False, message="ERROR [INTERNAL]: Failure Recovery Manager tidak tersedia")
+        with self._admin_lock:
+            self.require_outside_tx(session)
+            if self._frm is None:
+                return ExecutionResult(ok=False, message="ERROR [INTERNAL]: Failure Recovery Manager tidak tersedia")
 
-        res = self._frm.checkpoint()
-        if not res.ok:
-            return ExecutionResult(ok=False, message=res.message or "ERROR [LOG]: CHECKPOINT gagal")
+            res = self._frm.checkpoint()
+            if not res.ok:
+                return ExecutionResult(ok=False, message=res.message or "ERROR [LOG]: CHECKPOINT gagal")
 
-        msg = res.message or (
-            f"CHECKPOINT selesai (lsn {res.lsn})" if res.lsn is not None else "CHECKPOINT selesai"
-        )
-        return ExecutionResult(ok=True, message=msg)
+            msg = res.message or (
+                f"CHECKPOINT selesai (lsn {res.lsn})" if res.lsn is not None else "CHECKPOINT selesai"
+            )
+            return ExecutionResult(ok=True, message=msg)
 
     def show_log(self, tx_id: int | None = None) -> ExecutionResult:
         if self._frm is None:
@@ -117,18 +128,20 @@ class MetaCommandHandler:
 
     def restore(self, target: RecoveryTarget, session: Session) -> ExecutionResult:
         self.require_outside_tx(session)
-        if self._frm is None:
-            return ExecutionResult(ok=False, message="ERROR [INTERNAL]: Failure Recovery Manager tidak tersedia")
+        with self._admin_lock:
+            self.require_outside_tx(session)
+            if self._frm is None:
+                return ExecutionResult(ok=False, message="ERROR [INTERNAL]: Failure Recovery Manager tidak tersedia")
 
-        res = self._frm.recover_to(target)
-        if not res.ok:
-            return ExecutionResult(ok=False, message=res.message or "ERROR [RECOVERY]: RESTORE gagal")
+            res = self._frm.recover_to(target)
+            if not res.ok:
+                return ExecutionResult(ok=False, message=res.message or "ERROR [RECOVERY]: RESTORE gagal")
 
-        if self._ccm is not None:
-            self._ccm.initialize(res.last_tx_id)
+            if self._ccm is not None:
+                self._ccm.initialize(res.last_tx_id)
 
-        msg = res.message or f"RESTORE selesai (last_tx_id={res.last_tx_id}, last_lsn={res.last_lsn})"
-        return ExecutionResult(ok=True, message=msg)
+            msg = res.message or f"RESTORE selesai (last_tx_id={res.last_tx_id}, last_lsn={res.last_lsn})"
+            return ExecutionResult(ok=True, message=msg)
 
     def require_outside_tx(self, session: Session) -> None:
         if session.in_explicit_tx or session.tx_id is not None:
@@ -146,6 +159,7 @@ class QueryProcessorFacade(QueryProcessor):
         transactions: TransactionCoordinator | None = None,
         meta: MetaCommandHandler | None = None,
         sessions: SessionManager | None = None,
+        ddl: DDLCoordinator | None = None,
     ) -> None:
         self._qo = qo
         self._sm = sm
@@ -153,9 +167,18 @@ class QueryProcessorFacade(QueryProcessor):
         self._frm = frm
         self._translator = translator or PlanTranslator()
         self._transactions = transactions or TransactionCoordinator(ccm)
-        self._meta = meta or MetaCommandHandler(qo=qo, frm=frm, ccm=ccm)
-        self._sessions = sessions or SessionManager()
         self._formatter = ResultFormatter()
+        self._ddl = ddl or DDLCoordinator(
+            transactions=self._transactions,
+            formatter=self._formatter,
+        )
+        self._meta = meta or MetaCommandHandler(
+            qo=qo,
+            frm=frm,
+            ccm=ccm,
+            admin_lock=self._ddl.admin_lock,
+        )
+        self._sessions = sessions or SessionManager()
         self._closing = False
         self._storage_closed = False
         self._closed = False
@@ -227,6 +250,9 @@ class QueryProcessorFacade(QueryProcessor):
 
             if parsed.kind == QueryKind.TRANSACTION:
                 return self._handle_transaction(parsed.command, session)
+
+            if parsed.kind in _DDL_KINDS:
+                return self._execute_ddl_query(parsed, session)
 
             return self._execute_data_or_index_query(parsed, session)
 
@@ -337,11 +363,41 @@ class QueryProcessorFacade(QueryProcessor):
 
         return ExecutionResult(ok=False, message="ERROR [TX]: Perintah transaksi tidak dikenal")
 
+    def _execute_ddl_query(
+        self,
+        parsed: ParsedQuery,
+        session: Session,
+    ) -> ExecutionResult:
+        def _work() -> ExecutionResult:
+            optimized = self._qo.optimize_query(parsed)
+            if optimized.plan is not None:
+                self._translator.validate(optimized.plan)
+            ctx = ExecContext(
+                tx_id=None,
+                sm=self._sm,
+                ccm=self._ccm,
+                access_intent=Action.WRITE,
+            )
+            ctx.check_cancelled()
+            executable = self._translator.build(optimized, ctx)
+            res = executable.execute(ctx)
+            ctx.check_cancelled()
+            if res.ok:
+                res.affected_rows = 0
+                if not res.message:
+                    res.message = self._default_success_message(optimized.kind, 0)
+            return res
+
+        return self._ddl.run(session, _work)
+
     def _execute_data_or_index_query(
         self,
         parsed: ParsedQuery,
         session: Session,
     ) -> ExecutionResult:
+        if parsed.kind in _DDL_KINDS:
+            return self._execute_ddl_query(parsed, session)
+
         if parsed.kind == QueryKind.CREATE_INDEX and (
             session.in_explicit_tx or session.tx_id is not None
         ):
@@ -351,6 +407,8 @@ class QueryProcessorFacade(QueryProcessor):
             )
 
         optimized = self._qo.optimize_query(parsed)
+        if optimized.kind in _DDL_KINDS:
+            return self._execute_ddl_query(optimized, session)
         if optimized.plan is not None:
             self._translator.validate(optimized.plan)
 
@@ -395,6 +453,10 @@ class QueryProcessorFacade(QueryProcessor):
             return f"{affected_rows} baris dihapus"
         if kind == QueryKind.CREATE_INDEX:
             return "Index berhasil dibuat"
+        if kind == QueryKind.CREATE_TABLE:
+            return "Tabel berhasil dibuat"
+        if kind == QueryKind.DROP_TABLE:
+            return "Tabel berhasil dihapus"
         return ""
 
     def _runtime_error_result(self, session: Session, error: Exception) -> ExecutionResult:
