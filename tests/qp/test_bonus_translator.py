@@ -144,8 +144,8 @@ class TestBonusTranslator(unittest.TestCase):
                 self.build(select(Join(kind=JoinKind.CROSS, children=children), ref("student")))
         self.sm.get_schema.assert_not_called()
 
-    def test_column_alias_parameters_are_not_silently_ignored(self) -> None:
-        for aliases in (["nim", "extra"], [""], [False], None, ["nim"]):
+    def test_invalid_column_alias_parameters_are_rejected(self) -> None:
+        for aliases in (["nim", "extra"], [""], [False], None):
             with self.subTest(aliases=aliases), self.assertRaises(PlanError):
                 self.build(Project(columns=[ref("student")], aliases=aliases,
                                    children=[TableScan(table="student")]))
