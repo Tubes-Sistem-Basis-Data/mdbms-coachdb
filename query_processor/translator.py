@@ -9,7 +9,7 @@ from common.expression import (
     And, ArithOp, BinaryOp, ColumnRef, Comparison, CompOp, Expression, Literal, Subquery,
 )
 from common.plan import (
-    CreateIndex, Delete, Filter, IndexScan, Insert, Join, JoinKind, ParsedQuery,
+    CreateIndex, Delete, Filter, IndexScan, Insert, Join, JoinKind, Limit, ParsedQuery,
     PlanNode, Project, QueryKind, Sort, TableScan, Update,
 )
 from query_processor.context import ExecContext
@@ -21,25 +21,27 @@ from query_processor.operators.delete import DeleteExecution
 from query_processor.operators.filter import FilterOp
 from query_processor.operators.insert import InsertExecution
 from query_processor.operators.join import BlockNestedLoopJoinOp
+from query_processor.operators.limit import LimitOp
 from query_processor.operators.project import ProjectOp, SelectExecution
 from query_processor.operators.scan import IndexScanOp, TableScanOp
 from query_processor.operators.sort import SortOp
 from query_processor.operators.update import UpdateExecution
+from query_processor.select_plan import select_project
 from query_processor.subqueries import run_scalar
 from query_processor.tuple import ColumnBinding, OutputSchema
 
 
 _ARITY = {
-    TableScan: 0, IndexScan: 0, Filter: 1, Project: 1, Join: 2, Sort: 1,
+    TableScan: 0, IndexScan: 0, Filter: 1, Project: 1, Join: 2, Sort: 1, Limit: 1,
     Insert: 0, Update: 1, Delete: 1, CreateIndex: 0,
 }
-_ROW_NODES = (TableScan, IndexScan, Filter, Project, Join, Sort)
+_ROW_NODES = (TableScan, IndexScan, Filter, Project, Join, Sort, Limit)
 _ROOT_TYPES = {
-    QueryKind.SELECT: Project,
-    QueryKind.INSERT: Insert,
-    QueryKind.UPDATE: Update,
-    QueryKind.DELETE: Delete,
-    QueryKind.CREATE_INDEX: CreateIndex,
+    QueryKind.SELECT: (Project, Limit),
+    QueryKind.INSERT: (Insert,),
+    QueryKind.UPDATE: (Update,),
+    QueryKind.DELETE: (Delete,),
+    QueryKind.CREATE_INDEX: (CreateIndex,),
 }
 
 
@@ -61,12 +63,14 @@ class PlanTranslator:
         _require(isinstance(parsed.kind, QueryKind), "jenis query tidak dikenal")
         expected = _ROOT_TYPES.get(parsed.kind)
         _require(expected is not None, "transaksi dan EXPLAIN harus ditangani facade QP")
-        _require(type(parsed.plan) is expected, f"akar {parsed.kind.value} harus {expected.__name__}")
+        expected_name = "/".join(node_type.__name__ for node_type in expected)
+        _require(type(parsed.plan) in expected, f"akar {parsed.kind.value} harus {expected_name}")
         _require(parsed.command is None, "query data tidak boleh membawa perintah transaksi")
         self.validate(parsed.plan)
         schemas: dict[str, OutputSchema] = {}
         node = parsed.plan
-        if isinstance(node, Project):
+        if parsed.kind is QueryKind.SELECT:
+            select_project(node)
             return SelectExecution(self._build_rows(node, ctx, schemas))
         if isinstance(node, Insert):
             schema = self._table_schema(node.table, ctx, schemas)
@@ -155,6 +159,9 @@ class PlanTranslator:
             elif isinstance(node, Sort):
                 self._validate_ref(node.column)
                 _require(type(node.ascending) is bool, "Sort.ascending harus boolean")
+            elif isinstance(node, Limit):
+                _require(type(node.count) is int and node.count >= 0,
+                         "Limit.count harus bilangan bulat nonnegatif")
             elif isinstance(node, Insert):
                 _require(isinstance(node.values, list) and bool(node.values), "nilai INSERT wajib terisi")
                 for value in node.values:
@@ -217,9 +224,9 @@ class PlanTranslator:
                 _require(isinstance(expr.type, DataType), "tipe Literal tidak dikenal")
                 self._validate_value(expr.value)
             elif isinstance(expr, Subquery):
-                _require(type(expr.plan) is Project, "subquery skalar harus mempunyai plan SELECT")
+                project = select_project(expr.plan)
                 self._validate_node(expr.plan, active)
-                _require(len(expr.plan.columns) == 1, "subquery skalar harus menghasilkan tepat satu kolom")
+                _require(len(project.columns) == 1, "subquery skalar harus menghasilkan tepat satu kolom")
             elif isinstance(expr, (BinaryOp, Comparison)):
                 op_type = ArithOp if isinstance(expr, BinaryOp) else CompOp
                 _require(isinstance(expr.op, op_type), "operator ekspresi tidak dikenal")
@@ -294,8 +301,10 @@ class PlanTranslator:
         if isinstance(node, Sort):
             child.schema.index_of(node.column)
             return SortOp(child, node.column, node.ascending)
-        _require(not any(alias is not None for alias in node.aliases),
-                 "alias kolom menunggu dukungan operator ProjectOp")
+        if isinstance(node, Limit):
+            return LimitOp(child, node.count)
+        if node.aliases:
+            return ProjectOp(child, list(node.columns), aliases=list(node.aliases))
         return ProjectOp(child, list(node.columns))
 
     def _join_schema(

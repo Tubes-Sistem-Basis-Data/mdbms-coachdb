@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING, Callable
 
 from common.catalog import DataType
 from common.expression import Subquery
-from common.plan import PlanNode, Project
+from common.plan import PlanNode
 from query_processor.errors import ExecutionError, PlanError
+from query_processor.select_plan import select_project
 from query_processor.tuple import ExecRow, Value
 
 if TYPE_CHECKING:
@@ -25,8 +26,7 @@ def run_scalar(
     ctx: ExecContext,
     build_rows: Callable[[PlanNode, ExecContext], RowOperator],
 ) -> ScalarValue:
-    if not isinstance(subquery.plan, Project):
-        raise PlanError("Subquery skalar harus mempunyai plan SELECT")
+    select_project(subquery.plan)
     root = build_rows(subquery.plan, ctx)
     try:
         if len(root.schema.columns) != 1:
