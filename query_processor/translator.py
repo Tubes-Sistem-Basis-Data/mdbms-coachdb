@@ -10,7 +10,7 @@ from common.expression import (
 )
 from common.plan import (
     CreateIndex, Delete, Filter, IndexScan, Insert, Join, JoinKind, Limit, ParsedQuery,
-    PlanNode, Project, QueryKind, Sort, TableScan, Update,
+    PlanNode, Project, QueryKind, Sort, SubqueryScan, TableScan, Update,
 )
 from query_processor.context import ExecContext
 from query_processor.errors import PlanError
@@ -25,6 +25,7 @@ from query_processor.operators.limit import LimitOp
 from query_processor.operators.project import ProjectOp, SelectExecution
 from query_processor.operators.scan import IndexScanOp, TableScanOp
 from query_processor.operators.sort import SortOp
+from query_processor.operators.subquery import SubqueryScanOp
 from query_processor.operators.update import UpdateExecution
 from query_processor.select_plan import select_project
 from query_processor.subqueries import run_scalar
@@ -32,10 +33,10 @@ from query_processor.tuple import ColumnBinding, OutputSchema
 
 
 _ARITY = {
-    TableScan: 0, IndexScan: 0, Filter: 1, Project: 1, Join: 2, Sort: 1, Limit: 1,
+    TableScan: 0, IndexScan: 0, Filter: 1, Project: 1, Join: 2, Sort: 1, Limit: 1, SubqueryScan: 1,
     Insert: 0, Update: 1, Delete: 1, CreateIndex: 0,
 }
-_ROW_NODES = (TableScan, IndexScan, Filter, Project, Join, Sort, Limit)
+_ROW_NODES = (TableScan, IndexScan, Filter, Project, Join, Sort, Limit, SubqueryScan)
 _ROOT_TYPES = {
     QueryKind.SELECT: (Project, Limit),
     QueryKind.INSERT: (Insert,),
@@ -162,6 +163,11 @@ class PlanTranslator:
             elif isinstance(node, Limit):
                 _require(type(node.count) is int and node.count >= 0,
                          "Limit.count harus bilangan bulat nonnegatif")
+            elif isinstance(node, SubqueryScan):
+                _name(node.alias, "alias subquery")
+                select_project(node.children[0])
+                # Relasi di dalam subquery tidak terlihat di scope query luar.
+                sources = {node.alias}
             elif isinstance(node, Insert):
                 _require(isinstance(node.values, list) and bool(node.values), "nilai INSERT wajib terisi")
                 for value in node.values:
@@ -286,6 +292,9 @@ class PlanTranslator:
                                    key=node.key, low=node.low, high=node.high)
             return TableScanOp(node.table, schema)
         children = [self._build_rows(child, ctx, schemas) for child in node.children]
+        if isinstance(node, SubqueryScan):
+            inner = children[0]
+            return SubqueryScanOp(inner, node.alias, self._subquery_schema(inner.schema, node.alias))
         if isinstance(node, Join):
             left, right = children
             combined = OutputSchema(left.schema.columns + right.schema.columns)
@@ -306,6 +315,20 @@ class PlanTranslator:
         if node.aliases:
             return ProjectOp(child, list(node.columns), aliases=list(node.aliases))
         return ProjectOp(child, list(node.columns))
+
+    @staticmethod
+    def _subquery_schema(inner: OutputSchema, alias: str) -> OutputSchema:
+        """Scope baru subquery FROM: qualifier = alias, nama = nama ekspor child, tipe tetap."""
+        names = inner.output_names()
+        seen: set[str] = set()
+        for name in names:
+            _require(name not in seen,
+                     f"nama kolom '{name}' berulang pada subquery '{alias}'; gunakan alias kolom")
+            seen.add(name)
+        return OutputSchema([
+            ColumnBinding(alias, name, column.type)
+            for column, name in zip(inner.columns, names)
+        ])
 
     def _join_schema(
         self, left: OutputSchema, right: OutputSchema, kind: JoinKind,
