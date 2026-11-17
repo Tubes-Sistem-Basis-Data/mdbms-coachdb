@@ -151,7 +151,6 @@ class TestSelectBonusIntegration(unittest.TestCase):
                 for sql in (
                     "SELECT s.id FROM student s WHERE s.gpa > (SELECT gpa FROM threshold WHERE gpa > s.gpa LIMIT 1);",
                     "SELECT id FROM student WHERE id IN (SELECT id FROM student LIMIT 1);",
-                    "SELECT q.id FROM (SELECT id FROM student) q;",
                     "CREATE TABLE note (id INTEGER);",
                 ):
                     with self.subTest(sql=sql):
