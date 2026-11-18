@@ -3,20 +3,21 @@ from __future__ import annotations
 from dataclasses import replace
 from math import isfinite
 
-from common.catalog import DataType, IndexInfo, IndexKind
+from common.catalog import ColumnSchema, DataType, IndexInfo, IndexKind, TableSchema
 from common.errors import SemanticError
 from common.expression import (
     And, ArithOp, BinaryOp, ColumnRef, Comparison, CompOp, Expression, Literal, Subquery,
 )
 from common.plan import (
-    CreateIndex, Delete, Filter, IndexScan, Insert, Join, JoinKind, Limit, ParsedQuery,
-    PlanNode, Project, QueryKind, Sort, SubqueryScan, TableScan, Update,
+    CreateIndex, CreateTable, Delete, DropTable, Filter, IndexScan, Insert, Join, JoinKind,
+    Limit, ParsedQuery, PlanNode, Project, QueryKind, Sort, SubqueryScan, TableScan, Update,
 )
 from query_processor.context import ExecContext
 from query_processor.errors import PlanError
 from query_processor.evaluator import ExpressionEvaluator
 from query_processor.operators.base import Executable, RowOperator
 from query_processor.operators.create_index import CreateIndexExecution
+from query_processor.operators.ddl import CreateTableExecution, DropTableExecution
 from query_processor.operators.delete import DeleteExecution
 from query_processor.operators.filter import FilterOp
 from query_processor.operators.insert import InsertExecution
@@ -34,7 +35,7 @@ from query_processor.tuple import ColumnBinding, OutputSchema
 
 _ARITY = {
     TableScan: 0, IndexScan: 0, Filter: 1, Project: 1, Join: 2, Sort: 1, Limit: 1, SubqueryScan: 1,
-    Insert: 0, Update: 1, Delete: 1, CreateIndex: 0,
+    Insert: 0, Update: 1, Delete: 1, CreateIndex: 0, CreateTable: 0, DropTable: 0,
 }
 _ROW_NODES = (TableScan, IndexScan, Filter, Project, Join, Sort, Limit, SubqueryScan)
 _ROOT_TYPES = {
@@ -43,6 +44,8 @@ _ROOT_TYPES = {
     QueryKind.UPDATE: (Update,),
     QueryKind.DELETE: (Delete,),
     QueryKind.CREATE_INDEX: (CreateIndex,),
+    QueryKind.CREATE_TABLE: (CreateTable,),
+    QueryKind.DROP_TABLE: (DropTable,),
 }
 
 
@@ -59,17 +62,22 @@ class PlanTranslator:
     """Validasi plan dan bangun operator tanpa eksekusi."""
 
     def build(self, parsed: ParsedQuery, ctx: ExecContext) -> Executable:
-        """Bangun executable untuk SELECT, DML, atau index."""
+        """Bangun executable untuk SELECT, DML, index, atau DDL."""
         _require(isinstance(parsed, ParsedQuery), "input harus berupa ParsedQuery")
         _require(isinstance(parsed.kind, QueryKind), "jenis query tidak dikenal")
         expected = _ROOT_TYPES.get(parsed.kind)
         _require(expected is not None, "transaksi dan EXPLAIN harus ditangani facade QP")
         expected_name = "/".join(node_type.__name__ for node_type in expected)
         _require(type(parsed.plan) in expected, f"akar {parsed.kind.value} harus {expected_name}")
-        _require(parsed.command is None, "query data tidak boleh membawa perintah transaksi")
+        _require(parsed.command is None, "plan eksekusi tidak boleh membawa perintah transaksi")
         self.validate(parsed.plan)
-        schemas: dict[str, OutputSchema] = {}
         node = parsed.plan
+        if isinstance(node, (CreateTable, DropTable)):
+            _require(ctx.tx_id is None, "DDL memerlukan konteks tx_id=None")
+            if isinstance(node, CreateTable):
+                return CreateTableExecution(node.schema)
+            return DropTableExecution(node.table, node.cascade)
+        schemas: dict[str, OutputSchema] = {}
         if parsed.kind is QueryKind.SELECT:
             select_project(node)
             return SelectExecution(self._build_rows(node, ctx, schemas))
@@ -116,7 +124,7 @@ class PlanTranslator:
                 _require(type(child) in _ROW_NODES, "anak operator harus menghasilkan baris")
                 _require(sources.isdisjoint(child_sources), "sumber berulang membutuhkan alias yang berbeda")
                 sources.update(child_sources)
-            if isinstance(node, (TableScan, IndexScan, Insert, Update, Delete)):
+            if isinstance(node, (TableScan, IndexScan, Insert, Update, Delete, DropTable)):
                 _name(node.table, "nama tabel")
             if isinstance(node, (TableScan, IndexScan)):
                 if node.alias is not None:
@@ -180,6 +188,14 @@ class PlanTranslator:
                     self._validate_expr(node.expression, active=active)
             elif isinstance(node, CreateIndex):
                 self._validate_index(node.index)
+            elif isinstance(node, CreateTable):
+                _require(isinstance(node.schema, TableSchema), "CREATE TABLE memerlukan TableSchema")
+                _name(node.schema.name, "nama tabel CREATE TABLE")
+                _require(isinstance(node.schema.columns, list) and bool(node.schema.columns)
+                         and all(isinstance(column, ColumnSchema) for column in node.schema.columns),
+                         "CREATE TABLE memerlukan daftar ColumnSchema yang tidak kosong")
+            elif isinstance(node, DropTable):
+                _require(type(node.cascade) is bool, "DropTable.cascade harus boolean")
             return sources
         finally:
             active.remove(id(node))
