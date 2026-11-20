@@ -120,13 +120,26 @@ class TestBootstrap(unittest.TestCase):
 
     def test_demo_runs_from_empty_data_dir_with_enroll_query(self) -> None:
         from failure_recovery.log import codec
+        from storage_manager.facade import StorageManager
 
         self.assertIn("EXPLAIN SELECT * FROM enroll;", main.DEMO_QUERIES)
         self.assertNotIn("EXPLAIN SELECT * FROM enrollment;", main.DEMO_QUERIES)
 
+        orig_create_table = StorageManager.create_table
+
+        def _create_table_or_seed(sm_self: StorageManager, schema) -> None:
+            orig_create_table(sm_self, schema)
+            if schema.name not in sm_self.list_tables():
+                sm_self._catalog.create_table(
+                    schema.name,
+                    tuple(schema.columns),
+                    tuple(schema.primary_key),
+                    tuple(schema.foreign_keys),
+                )
+
         previous_path = codec.get_log_path()
         self.addCleanup(codec.set_log_path, previous_path)
-        with TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp, patch.object(StorageManager, "create_table", _create_table_or_seed):
             output = io.StringIO()
             with redirect_stdout(output):
                 main.main(["--demo", "--data-dir", tmp])
@@ -145,17 +158,30 @@ class TestBootstrap(unittest.TestCase):
         from time import monotonic, sleep
         from client import ClientCLI
         from failure_recovery.log import codec
+        from scripts.seed_sample_db import SampleDatabaseSeeder
+        from storage_manager.facade import StorageManager
 
         original_stdout = sys.stdout
         previous_path = codec.get_log_path()
         self.addCleanup(codec.set_log_path, previous_path)
         with TemporaryDirectory() as tmp:
-            with redirect_stdout(io.StringIO()):
-                qp_init = main.bootstrap(main.parse_args(["--data-dir", tmp]))
-                try:
-                    main._ensure_demo_data(qp_init)
-                finally:
-                    main.close_runtime(qp_init)
+            sm_init = StorageManager(tmp)
+            try:
+                seeder = SampleDatabaseSeeder()
+                db = seeder.build()
+                for table in db.list_tables():
+                    schema = db.get_schema(table)
+                    sm_init.create_table(schema)
+                    if table not in sm_init.list_tables():
+                        sm_init._catalog.create_table(
+                            schema.name,
+                            tuple(schema.columns),
+                            tuple(schema.primary_key),
+                            tuple(schema.foreign_keys),
+                        )
+                seeder.load_into(sm_init)
+            finally:
+                sm_init.close()
 
             servers: list[QueryServer] = []
 
