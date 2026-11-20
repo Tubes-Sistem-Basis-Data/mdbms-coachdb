@@ -118,6 +118,97 @@ class TestBootstrap(unittest.TestCase):
             main.main(["--serve"])
         qp.close.assert_not_called()
 
+    def test_demo_runs_from_empty_data_dir_with_enroll_query(self) -> None:
+        from failure_recovery.log import codec
+
+        self.assertIn("EXPLAIN SELECT * FROM enroll;", main.DEMO_QUERIES)
+        self.assertNotIn("EXPLAIN SELECT * FROM enrollment;", main.DEMO_QUERIES)
+
+        previous_path = codec.get_log_path()
+        self.addCleanup(codec.set_log_path, previous_path)
+        with TemporaryDirectory() as tmp:
+            output = io.StringIO()
+            with redirect_stdout(output):
+                main.main(["--demo", "--data-dir", tmp])
+            text = output.getvalue()
+            self.assertIn("> SELECT * FROM student;", text)
+            self.assertIn("(60 baris)", text)
+            self.assertIn("> SELECT * FROM course;", text)
+            self.assertIn("(50 baris)", text)
+            self.assertIn("> EXPLAIN SELECT * FROM enroll;", text)
+            self.assertIn("TableScan [enroll]", text)
+            self.assertIn("> SELECT * FROM dosen;", text)
+            self.assertIn("ERROR [SEMANTIC]", text)
+
+    def test_two_clients_via_main_serve(self) -> None:
+        from time import monotonic, sleep
+        from client import ClientCLI
+        from failure_recovery.log import codec
+
+        previous_path = codec.get_log_path()
+        self.addCleanup(codec.set_log_path, previous_path)
+        with TemporaryDirectory() as tmp:
+            qp_init = main.bootstrap(main.parse_args(["--data-dir", tmp]))
+            try:
+                main._ensure_demo_data(qp_init)
+            finally:
+                main.close_runtime(qp_init)
+
+            servers: list[QueryServer] = []
+
+            def make_server(*args, **kwargs) -> QueryServer:
+                srv = QueryServer(*args, **kwargs)
+                servers.append(srv)
+                return srv
+
+            server_output = io.StringIO()
+            with patch("main.QueryServer", side_effect=make_server):
+                thread = Thread(
+                    target=lambda: (
+                        redirect_stdout(server_output).__enter__(),
+                        main.main(["--serve", "--data-dir", tmp, "--host", "127.0.0.1", "--port", "0"]),
+                    ),
+                    daemon=True,
+                )
+                thread.start()
+                deadline = monotonic() + 5.0
+                while (not servers or not servers[0]._running or servers[0].port == 0) and monotonic() < deadline:
+                    sleep(0.02)
+
+                self.assertTrue(servers and servers[0]._running)
+                port = servers[0].port
+
+                client1 = ClientCLI(host="127.0.0.1", port=port)
+                client2 = ClientCLI(host="127.0.0.1", port=port)
+                try:
+                    res1 = client1.send("SELECT id, name FROM student WHERE id = 1;")
+                    res2 = client2.send("SELECT id, name FROM course WHERE id = 1;")
+                    self.assertTrue(res1.ok, res1.message)
+                    self.assertTrue(res2.ok, res2.message)
+                    self.assertEqual(len(res1.rows), 1)
+                    self.assertEqual(len(res2.rows), 1)
+                    self.assertIsNotNone(client1._session_id)
+                    self.assertIsNotNone(client2._session_id)
+                    self.assertNotEqual(client1._session_id, client2._session_id)
+
+                    self.assertTrue(client1.send("BEGIN;").ok)
+                    ins = client1.send(
+                        "INSERT INTO student VALUES (999, 'Mahasiswa Baru', 'CS', 3.95);"
+                    )
+                    self.assertTrue(ins.ok, ins.message)
+                    self.assertEqual(ins.affected_rows, 1)
+                    self.assertTrue(client1.send("COMMIT;").ok)
+
+                    check2 = client2.send("SELECT name FROM student WHERE id = 999;")
+                    self.assertTrue(check2.ok, check2.message)
+                    self.assertEqual(check2.rows, [["Mahasiswa Baru"]])
+                finally:
+                    client1.close()
+                    client2.close()
+                    servers[0].shutdown()
+                    thread.join(timeout=5.0)
+                    self.assertFalse(thread.is_alive())
+
 
 class TestRuntimeClose(unittest.TestCase):
     def setUp(self) -> None:

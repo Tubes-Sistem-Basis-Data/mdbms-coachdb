@@ -25,7 +25,7 @@ DEMO_QUERIES = [
     "BEGIN;",
     "SELECT * FROM course;",
     "ABORT;",
-    "EXPLAIN SELECT * FROM enrollment;",
+    "EXPLAIN SELECT * FROM enroll;",
     "SELECT * FROM dosen;",
     "SELECT name FROM student;",
 ]
@@ -88,7 +88,40 @@ def print_result(sql: str, result: ExecutionResult) -> None:
     print(_FORMATTER.format(result))
 
 
+def _ensure_demo_data(qp: QueryProcessor) -> None:
+    sm = getattr(qp, "_sm", None)
+    if sm is None:
+        return
+    list_tables = getattr(sm, "list_tables", None)
+    if not callable(list_tables):
+        return
+    tables = list_tables()
+    if not isinstance(tables, list) or tables:
+        return
+
+    from scripts.seed_sample_db import SampleDatabaseSeeder
+
+    seeder = SampleDatabaseSeeder()
+    db = seeder.build()
+    for table in db.list_tables():
+        schema = db.get_schema(table)
+        create_table = getattr(sm, "create_table", None)
+        if callable(create_table):
+            create_table(schema)
+        if table not in list_tables():
+            catalog = getattr(sm, "_catalog", None)
+            if catalog is not None and hasattr(catalog, "create_table"):
+                catalog.create_table(
+                    schema.name,
+                    tuple(schema.columns),
+                    tuple(schema.primary_key),
+                    tuple(schema.foreign_keys),
+                )
+    seeder.load_into(sm)
+
+
 def run_demo(qp: QueryProcessor) -> None:
+    _ensure_demo_data(qp)
     session = qp.open_session()
     try:
         for sql in DEMO_QUERIES:
