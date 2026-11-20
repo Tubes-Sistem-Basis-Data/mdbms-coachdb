@@ -104,19 +104,7 @@ def _ensure_demo_data(qp: QueryProcessor) -> None:
     seeder = SampleDatabaseSeeder()
     db = seeder.build()
     for table in db.list_tables():
-        schema = db.get_schema(table)
-        create_table = getattr(sm, "create_table", None)
-        if callable(create_table):
-            create_table(schema)
-        if table not in list_tables():
-            catalog = getattr(sm, "_catalog", None)
-            if catalog is not None and hasattr(catalog, "create_table"):
-                catalog.create_table(
-                    schema.name,
-                    tuple(schema.columns),
-                    tuple(schema.primary_key),
-                    tuple(schema.foreign_keys),
-                )
+        sm.create_table(db.get_schema(table))
     seeder.load_into(sm)
 
 

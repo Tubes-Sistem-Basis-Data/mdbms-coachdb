@@ -141,18 +141,21 @@ class TestBootstrap(unittest.TestCase):
             self.assertIn("ERROR [SEMANTIC]", text)
 
     def test_two_clients_via_main_serve(self) -> None:
+        import sys
         from time import monotonic, sleep
         from client import ClientCLI
         from failure_recovery.log import codec
 
+        original_stdout = sys.stdout
         previous_path = codec.get_log_path()
         self.addCleanup(codec.set_log_path, previous_path)
         with TemporaryDirectory() as tmp:
-            qp_init = main.bootstrap(main.parse_args(["--data-dir", tmp]))
-            try:
-                main._ensure_demo_data(qp_init)
-            finally:
-                main.close_runtime(qp_init)
+            with redirect_stdout(io.StringIO()):
+                qp_init = main.bootstrap(main.parse_args(["--data-dir", tmp]))
+                try:
+                    main._ensure_demo_data(qp_init)
+                finally:
+                    main.close_runtime(qp_init)
 
             servers: list[QueryServer] = []
 
@@ -162,25 +165,27 @@ class TestBootstrap(unittest.TestCase):
                 return srv
 
             server_output = io.StringIO()
+
+            def run_server() -> None:
+                with redirect_stdout(server_output):
+                    main.main(["--serve", "--data-dir", tmp, "--host", "127.0.0.1", "--port", "0"])
+
             with patch("main.QueryServer", side_effect=make_server):
-                thread = Thread(
-                    target=lambda: (
-                        redirect_stdout(server_output).__enter__(),
-                        main.main(["--serve", "--data-dir", tmp, "--host", "127.0.0.1", "--port", "0"]),
-                    ),
-                    daemon=True,
-                )
+                thread = Thread(target=run_server, daemon=True)
+                client1: ClientCLI | None = None
+                client2: ClientCLI | None = None
                 thread.start()
-                deadline = monotonic() + 5.0
-                while (not servers or not servers[0]._running or servers[0].port == 0) and monotonic() < deadline:
-                    sleep(0.02)
-
-                self.assertTrue(servers and servers[0]._running)
-                port = servers[0].port
-
-                client1 = ClientCLI(host="127.0.0.1", port=port)
-                client2 = ClientCLI(host="127.0.0.1", port=port)
                 try:
+                    deadline = monotonic() + 5.0
+                    while (not servers or not servers[0]._running or servers[0].port == 0) and monotonic() < deadline:
+                        sleep(0.02)
+
+                    self.assertTrue(servers and servers[0]._running)
+                    port = servers[0].port
+
+                    client1 = ClientCLI(host="127.0.0.1", port=port)
+                    client2 = ClientCLI(host="127.0.0.1", port=port)
+
                     res1 = client1.send("SELECT id, name FROM student WHERE id = 1;")
                     res2 = client2.send("SELECT id, name FROM course WHERE id = 1;")
                     self.assertTrue(res1.ok, res1.message)
@@ -203,11 +208,16 @@ class TestBootstrap(unittest.TestCase):
                     self.assertTrue(check2.ok, check2.message)
                     self.assertEqual(check2.rows, [["Mahasiswa Baru"]])
                 finally:
-                    client1.close()
-                    client2.close()
-                    servers[0].shutdown()
+                    if client1 is not None:
+                        client1.close()
+                    if client2 is not None:
+                        client2.close()
+                    for srv in servers:
+                        srv.shutdown()
                     thread.join(timeout=5.0)
                     self.assertFalse(thread.is_alive())
+
+        self.assertIs(sys.stdout, original_stdout)
 
 
 class TestRuntimeClose(unittest.TestCase):
