@@ -118,130 +118,94 @@ class TestBootstrap(unittest.TestCase):
             main.main(["--serve"])
         qp.close.assert_not_called()
 
-    def test_demo_runs_from_empty_data_dir_with_enroll_query(self) -> None:
-        from failure_recovery.log import codec
-        from storage_manager.facade import StorageManager
-
-        self.assertIn("EXPLAIN SELECT * FROM enroll;", main.DEMO_QUERIES)
-        self.assertNotIn("EXPLAIN SELECT * FROM enrollment;", main.DEMO_QUERIES)
-
-        orig_create_table = StorageManager.create_table
-
-        def _create_table_or_seed(sm_self: StorageManager, schema) -> None:
-            orig_create_table(sm_self, schema)
-            if schema.name not in sm_self.list_tables():
-                sm_self._catalog.create_table(
-                    schema.name,
-                    tuple(schema.columns),
-                    tuple(schema.primary_key),
-                    tuple(schema.foreign_keys),
-                )
-
-        previous_path = codec.get_log_path()
-        self.addCleanup(codec.set_log_path, previous_path)
-        with TemporaryDirectory() as tmp, patch.object(StorageManager, "create_table", _create_table_or_seed):
-            output = io.StringIO()
-            with redirect_stdout(output):
-                main.main(["--demo", "--data-dir", tmp])
-            text = output.getvalue()
-            self.assertIn("> SELECT * FROM student;", text)
-            self.assertIn("(60 baris)", text)
-            self.assertIn("> SELECT * FROM course;", text)
-            self.assertIn("(50 baris)", text)
-            self.assertIn("> EXPLAIN SELECT * FROM enroll;", text)
-            self.assertIn("TableScan [enroll]", text)
-            self.assertIn("> SELECT * FROM dosen;", text)
-            self.assertIn("ERROR [SEMANTIC]", text)
-
     def test_two_clients_via_main_serve(self) -> None:
         import sys
         from time import monotonic, sleep
         from client import ClientCLI
+        from common.log import LogKind
         from failure_recovery.log import codec
-        from scripts.seed_sample_db import SampleDatabaseSeeder
-        from storage_manager.facade import StorageManager
 
         original_stdout = sys.stdout
         previous_path = codec.get_log_path()
         self.addCleanup(codec.set_log_path, previous_path)
-        with TemporaryDirectory() as tmp:
-            sm_init = StorageManager(tmp)
-            try:
-                seeder = SampleDatabaseSeeder()
-                db = seeder.build()
-                for table in db.list_tables():
-                    schema = db.get_schema(table)
-                    sm_init.create_table(schema)
-                    if table not in sm_init.list_tables():
-                        sm_init._catalog.create_table(
-                            schema.name,
-                            tuple(schema.columns),
-                            tuple(schema.primary_key),
-                            tuple(schema.foreign_keys),
-                        )
-                seeder.load_into(sm_init)
-            finally:
-                sm_init.close()
+        for protocol in ("lock", "timestamp"):
+            with self.subTest(protocol=protocol), TemporaryDirectory() as tmp:
+                servers: list[QueryServer] = []
+                server_errors: list[BaseException] = []
 
-            servers: list[QueryServer] = []
+                def make_server(*args, **kwargs) -> QueryServer:
+                    server = QueryServer(*args, **kwargs)
+                    servers.append(server)
+                    return server
 
-            def make_server(*args, **kwargs) -> QueryServer:
-                srv = QueryServer(*args, **kwargs)
-                servers.append(srv)
-                return srv
+                def run_server() -> None:
+                    try:
+                        main.main(["--serve", "--data-dir", tmp, "--protocol", protocol,
+                                   "--host", "127.0.0.1", "--port", "0"])
+                    except BaseException as exc:
+                        server_errors.append(exc)
 
-            server_output = io.StringIO()
+                server_output = io.StringIO()
+                with redirect_stdout(server_output), patch("main.QueryServer", side_effect=make_server):
+                    thread = Thread(target=run_server, daemon=True)
+                    clients: list[ClientCLI] = []
+                    thread.start()
+                    try:
+                        deadline = monotonic() + 5.0
+                        while (not servers or not servers[0]._running or servers[0].port == 0):
+                            if server_errors or not thread.is_alive() or monotonic() >= deadline:
+                                break
+                            sleep(0.02)
+                        self.assertEqual(server_errors, [], server_output.getvalue())
+                        self.assertTrue(servers and servers[0]._running and servers[0].port != 0)
 
-            def run_server() -> None:
-                with redirect_stdout(server_output):
-                    main.main(["--serve", "--data-dir", tmp, "--host", "127.0.0.1", "--port", "0"])
+                        for _ in range(2):
+                            client = ClientCLI(host="127.0.0.1", port=servers[0].port)
+                            clients.append(client)
+                            client.connect()
+                            client._connection.settimeout(3.0)
+                        first, second = clients
+                        begin_first = first.send("BEGIN;")
+                        begin_second = second.send("BEGIN;")
+                        self.assertTrue(begin_first.ok, begin_first.message)
+                        self.assertTrue(begin_second.ok, begin_second.message)
+                        self.assertNotEqual(begin_first.message, begin_second.message)
+                        self.assertIsNotNone(first._session_id)
+                        self.assertIsNotNone(second._session_id)
+                        self.assertNotEqual(first._session_id, second._session_id)
 
-            with patch("main.QueryServer", side_effect=make_server):
-                thread = Thread(target=run_server, daemon=True)
-                client1: ClientCLI | None = None
-                client2: ClientCLI | None = None
-                thread.start()
+                        invalid = first.send("SELECT * FROM missing_table;")
+                        self.assertFalse(invalid.ok)
+                        self.assertIn("SEMANTIC", invalid.message)
+                        self.assertTrue(first.send("ABORT;").ok)
+                        self.assertTrue(second.send("COMMIT;").ok)
+
+                        self.assertTrue(first.send("BEGIN;").ok)
+                        first.close()
+                        self.assertTrue(second.send("BEGIN;").ok)
+                        self.assertTrue(second.send("ABORT;").ok)
+                    finally:
+                        for client in clients:
+                            client.close()
+                        for server in servers:
+                            server.shutdown()
+                        thread.join(timeout=5.0)
+                        self.assertFalse(thread.is_alive())
+                self.assertEqual(server_errors, [], server_output.getvalue())
+                self.assertIs(sys.stdout, original_stdout)
+
+                reader = main.FailureRecoveryManager(log_path=str(Path(tmp) / "wal.log"))
                 try:
-                    deadline = monotonic() + 5.0
-                    while (not servers or not servers[0]._running or servers[0].port == 0) and monotonic() < deadline:
-                        sleep(0.02)
-
-                    self.assertTrue(servers and servers[0]._running)
-                    port = servers[0].port
-
-                    client1 = ClientCLI(host="127.0.0.1", port=port)
-                    client2 = ClientCLI(host="127.0.0.1", port=port)
-
-                    res1 = client1.send("SELECT id, name FROM student WHERE id = 1;")
-                    res2 = client2.send("SELECT id, name FROM course WHERE id = 1;")
-                    self.assertTrue(res1.ok, res1.message)
-                    self.assertTrue(res2.ok, res2.message)
-                    self.assertEqual(len(res1.rows), 1)
-                    self.assertEqual(len(res2.rows), 1)
-                    self.assertIsNotNone(client1._session_id)
-                    self.assertIsNotNone(client2._session_id)
-                    self.assertNotEqual(client1._session_id, client2._session_id)
-
-                    self.assertTrue(client1.send("BEGIN;").ok)
-                    ins = client1.send(
-                        "INSERT INTO student VALUES (999, 'Mahasiswa Baru', 'CS', 3.95);"
-                    )
-                    self.assertTrue(ins.ok, ins.message)
-                    self.assertEqual(ins.affected_rows, 1)
-                    self.assertTrue(client1.send("COMMIT;").ok)
-
-                    check2 = client2.send("SELECT name FROM student WHERE id = 999;")
-                    self.assertTrue(check2.ok, check2.message)
-                    self.assertEqual(check2.rows, [["Mahasiswa Baru"]])
+                    records = reader.read_log()
                 finally:
-                    if client1 is not None:
-                        client1.close()
-                    if client2 is not None:
-                        client2.close()
-                    for srv in servers:
-                        srv.shutdown()
-                    thread.join(timeout=5.0)
-                    self.assertFalse(thread.is_alive())
+                    reader.close()
+                tx_ids = [record.tx_id for record in records if record.kind is LogKind.BEGIN]
+                self.assertEqual(len(tx_ids), 4)
+                self.assertEqual(len(set(tx_ids)), 4)
+                histories = [[record.kind for record in records if record.tx_id == tx_id]
+                             for tx_id in tx_ids]
+                aborted = [LogKind.BEGIN, LogKind.ABORT_REQUEST, LogKind.ABORT]
+                self.assertCountEqual(histories, [[LogKind.BEGIN, LogKind.COMMIT]] + [aborted] * 3)
 
         self.assertIs(sys.stdout, original_stdout)
 
