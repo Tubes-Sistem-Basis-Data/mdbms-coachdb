@@ -88,28 +88,7 @@ def print_result(sql: str, result: ExecutionResult) -> None:
     print(_FORMATTER.format(result))
 
 
-def _ensure_demo_data(qp: QueryProcessor) -> None:
-    sm = getattr(qp, "_sm", None)
-    if sm is None:
-        return
-    list_tables = getattr(sm, "list_tables", None)
-    if not callable(list_tables):
-        return
-    tables = list_tables()
-    if not isinstance(tables, list) or tables:
-        return
-
-    from scripts.seed_sample_db import SampleDatabaseSeeder
-
-    seeder = SampleDatabaseSeeder()
-    db = seeder.build()
-    for table in db.list_tables():
-        sm.create_table(db.get_schema(table))
-    seeder.load_into(sm)
-
-
 def run_demo(qp: QueryProcessor) -> None:
-    _ensure_demo_data(qp)
     session = qp.open_session()
     try:
         for sql in DEMO_QUERIES:
