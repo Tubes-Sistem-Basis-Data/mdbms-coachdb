@@ -26,9 +26,8 @@ class TestDDLPlanIntegration(unittest.TestCase):
         self.ccm.commit.side_effect = lambda tx: TxResult(tx, TxStatus.COMMITTED, True)
         self.ccm.abort.side_effect = lambda tx: TxResult(tx, TxStatus.ABORTED, True)
         self.qo = QueryOptimizerFacade(self.sm)
-        # Aktif hanya pada fake katalog; aplikasi tetap memakai default allow_ddl=False.
         self.qp = QueryProcessorFacade(
-            qo=self.qo, sm=self.sm, ccm=self.ccm, ddl=DDLCoordinator(allow_ddl=True),
+            qo=self.qo, sm=self.sm, ccm=self.ccm,
         )
         self.session = self.qp.open_session()
 
@@ -91,9 +90,11 @@ class TestDDLPlanIntegration(unittest.TestCase):
         self.assertEqual(self.sm.drop_calls, ["node"])
         self.assertEqual(self.ccm.mock_calls, [])
 
-    def test_default_coordinator_rejects_ddl_before_mutation_or_data_transaction(self) -> None:
+    def test_explicitly_disabled_coordinator_rejects_ddl_before_mutation_or_data_transaction(self) -> None:
         self.execute_ok("CREATE TABLE existing (id INTEGER);")
-        qp = QueryProcessorFacade(qo=self.qo, sm=self.sm, ccm=self.ccm)
+        qp = QueryProcessorFacade(
+            qo=self.qo, sm=self.sm, ccm=self.ccm, ddl=DDLCoordinator(allow_ddl=False),
+        )
         session = qp.open_session()
         try:
             for sql in ("CREATE TABLE note (id INTEGER);", "DROP TABLE existing;"):

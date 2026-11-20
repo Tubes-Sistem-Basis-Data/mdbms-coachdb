@@ -170,6 +170,7 @@ class QueryProcessorFacade(QueryProcessor):
         self._formatter = ResultFormatter()
         self._ddl = ddl or DDLCoordinator(
             transactions=self._transactions,
+            allow_ddl=True,
             formatter=self._formatter,
         )
         self._meta = meta or MetaCommandHandler(

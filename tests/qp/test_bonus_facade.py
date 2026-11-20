@@ -263,13 +263,12 @@ class TestBonusFacade(unittest.TestCase):
             ccm=self.ccm,
             translator=self.translator,
         )
-        if allow_ddl:
-            qp._ddl = DDLCoordinator(
-                transactions=qp._transactions,
-                allow_ddl=True,
-                formatter=qp._formatter,
-                admin_lock=qp._ddl.admin_lock,
-            )
+        qp._ddl = DDLCoordinator(
+            transactions=qp._transactions,
+            allow_ddl=allow_ddl,
+            formatter=qp._formatter,
+            admin_lock=qp._ddl.admin_lock,
+        )
         return qp
 
     def test_uncertain_commit_blocks_subsequent_data_and_ddl_without_new_transaction(self) -> None:
@@ -327,7 +326,7 @@ class TestBonusFacade(unittest.TestCase):
         self.assertIsNotNone(qp._sessions.get_session(s2.session_id))
         self.assertEqual(s2.tx_id, 2)
 
-    def test_default_facade_rejects_ddl_before_calling_sm_or_starting_tx(self) -> None:
+    def test_explicitly_disabled_ddl_rejected_before_calling_sm_or_starting_tx(self) -> None:
         qp = self.make_facade(allow_ddl=False)
         session = qp.open_session()
 
