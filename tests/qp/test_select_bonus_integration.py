@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from common.catalog import ColumnSchema, DataType
+from common.catalog import ColumnSchema, DataType, TableSchema
 from common.log import LogKind
 from failure_recovery.log import codec
 from main import bootstrap, close_runtime, parse_args
@@ -23,13 +23,12 @@ def runtime(protocol):
         with TemporaryDirectory() as directory:
             sm = StorageManager(directory)
             try:
-                # Fixture saja; facade DDL SM belum diimplementasikan.
-                sm._catalog.create_table("student", (
+                sm.create_table(TableSchema("student", [
                     ColumnSchema("id", DataType.INTEGER, nullable=False),
                     ColumnSchema("name", DataType.VARCHAR, length=50),
                     ColumnSchema("gpa", DataType.FLOAT),
-                ), ("id",), ())
-                sm._catalog.create_table("threshold", (ColumnSchema("gpa", DataType.FLOAT),), (), ())
+                ], primary_key=["id"]))
+                sm.create_table(TableSchema("threshold", [ColumnSchema("gpa", DataType.FLOAT)]))
                 sm.bulk_load("student", ORIGINAL)
                 sm.bulk_load("threshold", [[3.2]])
             finally:
