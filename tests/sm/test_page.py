@@ -120,6 +120,60 @@ class TestSlottedPage(unittest.TestCase):
         # Record size yang sangat besar (melebihi ukuran blok) menghasilkan kapasitas 0
         self.assertEqual(SlottedPage.capacity(BLOCK_SIZE * 2), 0)
 
+    def test_reproduce_update_space_exhaustion(self):
+        buf = SlottedPage.init_page(page_id=0, record_size=40)
+        SlottedPage.write_slot(buf, 0, b"A" * 40)
+
+        # Test bahwa ruang bebas sudah tidak terpotong setiap update, ditest dengan update slot yang sama berulang kali
+        for i in range(100):
+            payload = f"update_{i:04d}".encode("utf-8").ljust(40, b"X")
+            SlottedPage.write_slot(buf, 0, payload)
+
+        self.assertEqual(SlottedPage.read_slot(buf, 0), b"update_0099".ljust(40, b"X"))
+
+    def test_reproduce_rollback_after_delete_on_full_page(self):
+        # Fix bug karena ruang bekas soft delete tidak pernah digunakan lagi sehingga write_slot gagal karena mengira bahwa storage sudah habis
+        rec_size = 50
+        buf = SlottedPage.init_page(page_id=0, record_size=rec_size)
+
+        # Isi page sampai penuh
+        num_records = (BLOCK_SIZE - SlottedPage.DIR_START_OFFSET) // (SlottedPage.SLOT_DIR_ENTRY_SIZE + rec_size)
+        for s in range(num_records):
+            SlottedPage.write_slot(buf, s, f"rec_{s:04d}".encode("utf-8").ljust(rec_size, b"X"))
+
+        # Hapus slot 5 secara soft delete
+        target_slot = 5
+        deleted_data = SlottedPage.read_slot(buf, target_slot)
+        SlottedPage.mark_tombstone(buf, target_slot)
+        self.assertEqual(SlottedPage.slot_status(buf, target_slot), SlotStatus.TOMBSTONE)
+
+        SlottedPage.write_slot(buf, target_slot, deleted_data)
+        self.assertEqual(SlottedPage.slot_status(buf, target_slot), SlotStatus.LIVE)
+        self.assertEqual(SlottedPage.read_slot(buf, target_slot), deleted_data)
+
+    def test_compact_method(self):
+        buf = SlottedPage.init_page(page_id=0, record_size=100)
+        SlottedPage.write_slot(buf, 0, b"data_0_" * 10) # data sejumlah 70 bytes
+        SlottedPage.write_slot(buf, 1, b"data_1_" * 10) # data sejumlah 70 bytes
+        SlottedPage.write_slot(buf, 2, b"data_2_" * 10) # data sejumlah 70 bytes
+
+        free_before = struct.unpack_from(SlottedPage.FREE_SPACE_PTR_FORMAT, buf, SlottedPage.FREE_SPACE_PTR_OFFSET)[0]
+
+        # Coba soft delete slot 1
+        SlottedPage.mark_tombstone(buf, 1)
+
+        # Coba lakukan defragmentasi ke page lalu cek apakah ruang bebas bertambah dengan tepat jumlah 70 bytes
+        SlottedPage.defragment(buf)
+
+        free_after = struct.unpack_from(SlottedPage.FREE_SPACE_PTR_FORMAT, buf, SlottedPage.FREE_SPACE_PTR_OFFSET)[0]
+        self.assertEqual(free_after, free_before + 70)
+
+        # Harusnya setelah defragmentasi, slot 0 dan slot 2 tetap bisa terbaca
+        self.assertEqual(SlottedPage.read_slot(buf, 0), b"data_0_" * 10)
+        self.assertEqual(SlottedPage.read_slot(buf, 2), b"data_2_" * 10)
+        self.assertIsNone(SlottedPage.read_slot(buf, 1))
+        self.assertEqual(SlottedPage.slot_status(buf, 1), SlotStatus.TOMBSTONE)
+
 
 if __name__ == "__main__":
     unittest.main()
