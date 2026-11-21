@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from common.errors import LogError, LogWriteError
@@ -63,6 +65,23 @@ class WalLogger(LogWriter, LogFlusher):
             if lsn <= self._flushed_lsn:
                 return
             self._persist(lsn)
+
+    @contextmanager
+    def restore_batch(self) -> Iterator[None]:
+        """Lindungi ekor WAL yang berisi marker restore dan checkpoint."""
+        with self._lock:
+            if self._file is None:
+                raise LogWriteError("penulis log sudah ditutup")
+            offset = self._file.seek(0, os.SEEK_END)
+            next_lsn, flushed_lsn = self.next_lsn, self._flushed_lsn
+            try:
+                yield
+            except Exception:
+                self._file.truncate(offset)
+                self._file.seek(0, os.SEEK_END)
+                self.next_lsn, self._flushed_lsn = next_lsn, flushed_lsn
+                os.fsync(self._file.fileno())
+                raise
 
     def close(self) -> None:
         with self._lock:

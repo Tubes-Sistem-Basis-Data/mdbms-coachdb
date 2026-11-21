@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
+from common.log import LogRecord
 from common.transaction import ChangeOp
 from failure_recovery.recovery.analysis import AnalysisResult, TransactionState
 
@@ -13,12 +16,16 @@ class RedoExecutor:
         self._sm = sm
 
     def run(self, analysis: AnalysisResult) -> int:
+        return self.replay(
+            record for record in analysis.changes
+            if record.tx_id is not None
+            and analysis.tx_state.get(record.tx_id) is TransactionState.COMMITTED
+        )
+
+    def replay(self, records: Iterable[LogRecord]) -> int:
+        """Terapkan perubahan yang sudah dipilih, sesuai urutan LSN."""
         redo_count = 0
-        for record in sorted(analysis.changes, key=lambda item: item.lsn):
-            if record.tx_id is None:
-                continue
-            if analysis.tx_state.get(record.tx_id) is not TransactionState.COMMITTED:
-                continue
+        for record in sorted(records, key=lambda item: item.lsn):
             change = record.change
             if change is None:
                 continue

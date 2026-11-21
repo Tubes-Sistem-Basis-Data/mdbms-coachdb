@@ -8,6 +8,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from common.errors import RecoveryError
 from common.log import CheckpointResult, LogKind, RecoveryTarget
 from failure_recovery.checkpoint.checkpoint_store import CheckpointStore
 from failure_recovery.checkpoint.meta import CheckpointMeta
@@ -63,29 +64,7 @@ class CheckpointManager(CheckpointInterface):
             self._ccm.pause_new_transactions()
             self._ccm.wait_until_idle()
 
-            latest = self._store.find_latest_completed()
-            active_tx, log_max_tx_id = self._wal_state()
-            max_tx_id = max(latest.max_tx_id if latest is not None else 0, log_max_tx_id)
-
-            begin_lsn = self._log_writer.log_checkpoint_begin()
-            self._log_flusher.flush_log_until(begin_lsn)
-            self._sm.flush()
-            end_lsn = self._log_writer.log_checkpoint_end()
-            self._log_flusher.flush_log_until(end_lsn)
-
-            snapshot_path = self._snapshot(end_lsn)
-            metadata = CheckpointMeta(
-                checkpoint_lsn=end_lsn,
-                snapshot_path=snapshot_path,
-                timestamp=datetime.now(timezone.utc),
-                active_tx=active_tx,
-                max_tx_id=max_tx_id,
-                completed=True,
-            )
-            if snapshot_path:
-                self._store.write_snapshot_metadata(metadata)
-            self._store.write_master_atomic(metadata)
-            result = CheckpointResult(ok=True, lsn=end_lsn, message="Checkpoint selesai")
+            result = self._write_checkpoint()
         except Exception as exc:
             result = CheckpointResult(ok=False, message=f"Checkpoint gagal: {exc}")
         finally:
@@ -97,6 +76,38 @@ class CheckpointManager(CheckpointInterface):
                     message=f"Gagal melanjutkan transaksi setelah checkpoint: {exc}",
                 )
         return result
+
+    def _write_checkpoint(self, restore_boundary_lsn: int | None = None) -> CheckpointResult:
+        latest = self._store.find_latest_completed()
+        if restore_boundary_lsn is None and latest is not None:
+            restore_boundary_lsn = latest.restore_boundary_lsn
+        active_tx, log_max_tx_id = self._wal_state()
+        max_tx_id = max(latest.max_tx_id if latest is not None else 0, log_max_tx_id)
+
+        begin_lsn = self._log_writer.log_checkpoint_begin()
+        self._log_flusher.flush_log_until(begin_lsn)
+        self._sm.flush()
+        end_lsn = self._log_writer.log_checkpoint_end()
+        self._log_flusher.flush_log_until(end_lsn)
+
+        try:
+            snapshot_path = self._snapshot(end_lsn)
+            metadata = CheckpointMeta(
+                checkpoint_lsn=end_lsn,
+                snapshot_path=snapshot_path,
+                timestamp=datetime.now(timezone.utc),
+                active_tx=active_tx,
+                max_tx_id=max_tx_id,
+                completed=True,
+                restore_boundary_lsn=restore_boundary_lsn,
+            )
+            if snapshot_path:
+                self._store.write_snapshot_metadata(metadata)
+            self._store.write_master_atomic(metadata)
+        except Exception:
+            self._store.discard_snapshot(end_lsn)
+            raise
+        return CheckpointResult(ok=True, lsn=end_lsn, message="Checkpoint selesai")
 
     def _wal_state(self) -> tuple[list[int], int]:
         """Transaksi aktif dan tx_id maksimum menurut WAL."""
@@ -135,40 +146,31 @@ class CheckpointManager(CheckpointInterface):
             return RestoreResult(ok=False, message="PITR belum dipasang")
         with self.checkpoint_lock:
             try:
-                if target.tx_id is not None:
-                    restored = self._pitr.restore_to_tx(target.tx_id)
-                else:
-                    restored = self._pitr.restore_to_time(
-                        datetime.fromtimestamp(target.timestamp, tz=timezone.utc)
-                    )
+                self._ccm.pause_new_transactions()
+                self._ccm.wait_until_idle()
+                result = self._pitr.restore(target, self._finalize_restore)
             except Exception as exc:
-                return RestoreResult(ok=False, message=f"Pemulihan gagal: {exc}")
-            if restored is None:
-                return RestoreResult(ok=False, message="PITR tidak menghasilkan status")
-            if not restored.ok:
-                return restored
+                result = RestoreResult(ok=False, message=f"Pemulihan gagal: {exc}")
+            finally:
+                try:
+                    self._ccm.resume_transactions()
+                except Exception as exc:
+                    logger.error("Gagal melanjutkan transaksi setelah pemulihan: %s", exc)
+            return result
 
+    def _finalize_restore(self, target: RecoveryTarget, boundary_lsn: int) -> str:
+        try:
+            self._rebuild_indexes()
+        except Exception as exc:
+            raise RecoveryError(f"rebuild index gagal: {exc}") from exc
+
+        with self._log_writer.restore_batch():
+            restore_lsn = self._log_writer.log_restore(target)
+            self._log_flusher.flush_log_until(restore_lsn)
             try:
-                self._rebuild_indexes()
+                return self._write_checkpoint(boundary_lsn).message
             except Exception as exc:
-                return RestoreResult(
-                    ok=False,
-                    message=f"{restored.message}; rebuild index gagal: {exc}",
-                )
-
-            checkpoint = self._checkpoint_locked()
-            if not checkpoint.ok:
-                return RestoreResult(
-                    ok=False,
-                    message=(
-                        f"{restored.message}; checkpoint setelah pemulihan gagal: "
-                        f"{checkpoint.message}"
-                    ),
-                )
-            return RestoreResult(
-                ok=True,
-                message=f"{restored.message}; {checkpoint.message}",
-            )
+                raise RecoveryError(f"checkpoint setelah pemulihan gagal: {exc}") from exc
 
     def start_periodic(self) -> None:
         """Mulai satu thread daemon untuk checkpoint berkala."""

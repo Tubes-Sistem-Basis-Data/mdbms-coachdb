@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING
 
 from common.log import CheckpointResult, LogRecord, RecoveryTarget
@@ -17,6 +18,10 @@ if TYPE_CHECKING:
 
 class LogWriter(ABC):
     """Port penulis catatan log."""
+
+    @abstractmethod
+    def restore_batch(self) -> AbstractContextManager[None]:
+        """Batalkan penambahan WAL jika finalisasi restore gagal."""
 
     @abstractmethod
     def log_begin(self, tx_id: int) -> int:

@@ -16,3 +16,4 @@ class CheckpointMeta:
     active_tx: list[int] = field(default_factory=list)
     max_tx_id: int = 0
     completed: bool = False
+    restore_boundary_lsn: int | None = None

@@ -37,6 +37,9 @@ class DeadlockRollbackTest(unittest.TestCase):
                     during_undo.append(ccm.validate_object(t1, B, Action.READ).status)
                     self.rows[rid] = list(values)
 
+                def flush(self) -> None:
+                    pass
+
             sm = Storage()
             frm.set_dependencies(sm, ccm)
             self.assertIs(write(ccm, t1, A), AccessStatus.ALLOWED)

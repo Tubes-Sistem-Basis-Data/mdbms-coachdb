@@ -207,9 +207,7 @@ class FailureRecoveryManager(FailureRecoveryManagerBase):
         pitr = PITRManager(
             store=self._checkpoint_store,
             sm=sm,
-            log_writer=self._log_writer,
             log_reader=self._log_reader,
-            log_flusher=self._log_flusher,
         )
         self._checkpoint_service = CheckpointManager(
             log_flusher=self._log_flusher,

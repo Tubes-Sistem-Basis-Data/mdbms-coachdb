@@ -41,6 +41,12 @@ class FakeStorageManager:
 
 
 class _GagalRebuildStorageManager(FakeStorageManager):
+    def snapshot_to(self, path: str) -> None:
+        self.backup = self.rows.copy()
+
+    def restore_from(self, path: str) -> None:
+        self.rows = self.backup
+
     def rebuild_indexes(self) -> None:
         self.calls.append("rebuild_indexes")
         raise StorageError("gagal rebuild index")
@@ -279,7 +285,32 @@ class TestRestoreFailure(PITRTestCase):
         self.assertEqual(len(self.frm.read_log()), before)
         self.assertFalse(self._restore_positions())
 
-    def test_rebuild_index_gagal_menggagalkan_restore_tanpa_checkpoint(self) -> None:
+    def test_target_tanpa_commit_ditolak_sebelum_mengubah_data(self) -> None:
+        rid = RID("student", 0, 1)
+        sm, _ = self._dependencies({rid: [1, "saved"]})
+        self._write(LogKind.BEGIN, 1)
+        self._write(
+            LogKind.DATA, 1,
+            self._change(rid, ChangeOp.UPDATE, [1, "old"], [1, "aborted"]),
+        )
+        self._write(LogKind.ABORT, 1)
+        self._write(LogKind.BEGIN, 2)
+        self._write(LogKind.COMMIT, 2)
+        self._write(LogKind.BEGIN, 3)
+        self._write(LogKind.ABORT_REQUEST, 3)
+        before = self.frm.read_log()
+
+        for tx_id in (1, 3):
+            with self.subTest(tx_id=tx_id):
+                result = self.frm.recover_to(RecoveryTarget(tx_id=tx_id))
+
+                self.assertFalse(result.ok, result.message)
+                self.assertIn("COMMIT", result.message)
+                self.assertEqual(sm.rows, {rid: [1, "saved"]})
+                self.assertEqual(sm.calls, [])
+                self.assertEqual(self.frm.read_log(), before)
+
+    def test_rebuild_index_gagal_mempertahankan_data_dan_wal(self) -> None:
         rid = RID("student", 0, 1)
         sm = _GagalRebuildStorageManager({rid: [1, "old"]})
         self.frm.set_dependencies(sm, FakeConcurrencyControl())
@@ -296,15 +327,14 @@ class TestRestoreFailure(PITRTestCase):
         )
         self._write(LogKind.COMMIT, 2)
         sm.rows[rid] = [1, "new"]
+        before = self.frm.read_log()
 
         result = self.frm.recover_to(RecoveryTarget(tx_id=1))
 
         self.assertFalse(result.ok)
         self.assertIn("gagal rebuild index", result.message)
-        kinds = [record.kind for record in self.frm.read_log()]
-        self.assertIn(LogKind.RESTORE, kinds)
-        self.assertNotIn(LogKind.CHECKPOINT_BEGIN, kinds)
-        self.assertNotIn(LogKind.CHECKPOINT_END, kinds)
+        self.assertEqual(sm.rows, {rid: [1, "new"]})
+        self.assertEqual(self.frm.read_log(), before)
 
     def test_recover_to_tanpa_dependensi_gagal(self) -> None:
         result = self.frm.recover_to(RecoveryTarget(tx_id=1))
