@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from client import ClientCLI
-from common.catalog import ColumnSchema, DataType
+from common.catalog import ColumnSchema, DataType, TableSchema
 from common.interfaces import QueryProcessor, Session
 from common.transaction import AccessStatus, TxResult, TxStatus
 from concurrency_control import CCManager
@@ -30,12 +30,12 @@ class TestDisconnectDuringWait(unittest.TestCase):
         temp = TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.sm = StorageManager(data_dir=temp.name)
-        self.addCleanup(self.sm._disk.close)
+        self.addCleanup(self.sm.close)
         for table in ("student", "blocked"):
-            self.sm._catalog.create_table(table, (
+            self.sm.create_table(TableSchema(table, [
                 ColumnSchema("id", DataType.INTEGER, nullable=False),
                 ColumnSchema("name", DataType.VARCHAR, length=50),
-            ), ("id",), ())
+            ], primary_key=["id"]))
         self.original = [[1, "old"], [2, "two"]]
         self.sm.bulk_load("student", self.original)
         self.sm.bulk_load("blocked", [[1, "old"]])
@@ -45,6 +45,7 @@ class TestDisconnectDuringWait(unittest.TestCase):
         self.frm.set_dependencies(self.sm, self.ccm)
         self.sm.set_log_flusher(self.frm.flush_log)
         self.qp = QueryProcessorFacade(QueryOptimizerFacade(self.sm), self.sm, self.ccm, self.frm)
+        self.addCleanup(self.qp.close)
         self.server = QueryServer(self.qp, port=0)
         self.clients: list[ClientCLI] = []
         self.sockets: list[socket.socket] = []

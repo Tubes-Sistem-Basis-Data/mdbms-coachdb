@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
-from common.catalog import ColumnSchema, DataType
+from common.catalog import ColumnSchema, DataType, TableSchema
 from common.expression import And, ColumnRef, Comparison, CompOp, Literal, Subquery
 from common.interfaces import QueryOptimizer
 from common.log import LogKind
@@ -35,13 +35,12 @@ class TestScalarIntegration(unittest.TestCase):
         temp = TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.sm = StorageManager(data_dir=temp.name)
-        self.addCleanup(self.sm._disk.close)
-        # Setup katalog selama facade DDL SM belum diimplementasikan.
-        self.sm._catalog.create_table("student", (
+        self.addCleanup(self.sm.close)
+        self.sm.create_table(TableSchema("student", [
             ColumnSchema("id", DataType.INTEGER, nullable=False),
             ColumnSchema("gpa", DataType.FLOAT), ColumnSchema("name", DataType.VARCHAR, length=50),
-        ), ("id",), ())
-        self.sm._catalog.create_table("threshold", (ColumnSchema("gpa", DataType.FLOAT),), (), ())
+        ], primary_key=["id"]))
+        self.sm.create_table(TableSchema("threshold", [ColumnSchema("gpa", DataType.FLOAT)]))
         self.original = [[1, 3.0, "Ada"], [2, 4.0, "Budi"], [3, 2.5, "Cici"]]
         self.sm.bulk_load("student", self.original)
         self.sm.bulk_load("threshold", [[3.2]])
@@ -54,8 +53,8 @@ class TestScalarIntegration(unittest.TestCase):
         self.qo.parse_query.side_effect = self.parse_manual_plan
         self.qo.optimize_query.side_effect = lambda parsed: parsed
         self.qp = QueryProcessorFacade(self.qo, self.sm, self.ccm, self.frm)
+        self.addCleanup(self.qp.close)
         self.session = self.qp.open_session()
-        self.addCleanup(self.qp.close_session, self.session.session_id)
 
     def parse_manual_plan(self, sql: str) -> ParsedQuery:
         command = sql.strip().rstrip(";").upper()
