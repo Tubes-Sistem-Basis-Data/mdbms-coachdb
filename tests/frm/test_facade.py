@@ -139,6 +139,9 @@ class _FakeStorageManager:
     def delete(self, table: str, rid: RID, lsn: int | None) -> None:
         self.rows.pop(rid, None)
 
+    def flush(self) -> None:
+        pass
+
 
 class _GagalStorageManager(_FakeStorageManager):
     def delete(self, table: str, rid: RID, lsn: int | None) -> None:

@@ -51,11 +51,13 @@ class RollbackManager(RollbackInterface):
             request_lsn = self._log_writer.log_abort_request(tx_id)
             self._log_flusher.flush_log_until(request_lsn)
 
-        for record in records:
-            if record.kind is not LogKind.DATA or record.change is None:
-                continue
-
+        changes = [
+            record for record in records if record.kind is LogKind.DATA and record.change is not None
+        ]
+        for record in changes:
             self._undo_record(record)
+        if changes:
+            self._sm.flush()
 
         abort_end_lsn = self._log_writer.log_abort_end(tx_id)
         self._log_flusher.flush_log_until(abort_end_lsn)

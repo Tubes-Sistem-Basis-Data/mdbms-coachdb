@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import threading
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,6 +25,7 @@ def _to_dict(meta: CheckpointMeta) -> dict:
         "active_tx": list(meta.active_tx),
         "max_tx_id": meta.max_tx_id,
         "completed": meta.completed,
+        "restore_boundary_lsn": meta.restore_boundary_lsn,
     }
 
 
@@ -33,6 +36,7 @@ def _from_dict(payload: dict) -> CheckpointMeta | None:
         active_tx = payload["active_tx"]
         max_tx_id = payload["max_tx_id"]
         completed = payload["completed"]
+        restore_boundary_lsn = payload.get("restore_boundary_lsn")
         if (
             type(lsn) is not int or lsn < 1
             or not isinstance(snapshot_path, str)
@@ -40,6 +44,9 @@ def _from_dict(payload: dict) -> CheckpointMeta | None:
             or any(type(tx) is not int or tx < 1 for tx in active_tx)
             or type(max_tx_id) is not int or max_tx_id < 0
             or type(completed) is not bool
+            or (restore_boundary_lsn is not None and (
+                type(restore_boundary_lsn) is not int or not 0 <= restore_boundary_lsn < lsn
+            ))
         ):
             return None
         return CheckpointMeta(
@@ -49,6 +56,7 @@ def _from_dict(payload: dict) -> CheckpointMeta | None:
             active_tx=list(active_tx),
             max_tx_id=max_tx_id,
             completed=completed,
+            restore_boundary_lsn=restore_boundary_lsn,
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -123,6 +131,14 @@ class CheckpointStore(CheckpointQueryInterface):
             raise ValueError("LSN checkpoint harus bilangan bulat positif")
         return str(Path(self.snapshot_dir) / f"checkpoint-{checkpoint_lsn}.snap")
 
+    def discard_snapshot(self, checkpoint_lsn: int) -> None:
+        """Buang snapshot dari checkpoint yang gagal diterbitkan."""
+        with self._lock:
+            (Path(self.snapshot_dir) / f"checkpoint-{checkpoint_lsn}.json").unlink(missing_ok=True)
+            snapshot = Path(self.snapshot_path(checkpoint_lsn))
+            if snapshot.is_dir():
+                shutil.rmtree(snapshot)
+
     def find_latest_completed(self) -> CheckpointMeta | None:
         metadata = self.read_master()
         return metadata if metadata is not None and metadata.completed else None
@@ -130,35 +146,39 @@ class CheckpointStore(CheckpointQueryInterface):
     def find_snapshot_before(self, target: RecoveryTarget) -> CheckpointMeta | None:
         """Snapshot selesai terbaru yang berada pada atau sebelum target."""
         with self._lock:
-            candidates = []
-            metadata = self.read_master()
-            if metadata is not None:
-                candidates.append(metadata)
-
-            directory = Path(self.snapshot_dir)
-            if directory.is_dir():
-                for path in directory.glob("*.json"):
-                    try:
-                        payload = json.loads(path.read_text(encoding="utf-8"))
-                    except (OSError, ValueError):
-                        continue
-                    archived = _from_dict(payload)
-                    if archived is not None:
-                        candidates.append(archived)
-
-            matched = [
-                candidate for candidate in candidates
-                if self._matches(candidate, target)
-            ]
-            if not matched:
-                return None
             return max(
-                matched,
+                (candidate for candidate in self._checkpoints() if self._matches(candidate, target)),
                 key=lambda candidate: (
                     candidate.checkpoint_lsn,
                     self._timestamp(candidate),
                 ),
+                default=None,
             )
+
+    def find_snapshot_by_lsn(self, after_lsn: int, target_lsn: int) -> CheckpointMeta | None:
+        """Cari snapshot siap pakai dalam rentang replay WAL."""
+        with self._lock:
+            return max(
+                (meta for meta in self._checkpoints()
+                 if after_lsn < meta.checkpoint_lsn <= target_lsn
+                 and meta.completed and not meta.active_tx
+                 and meta.snapshot_path and Path(meta.snapshot_path).is_dir()),
+                key=lambda meta: meta.checkpoint_lsn,
+                default=None,
+            )
+
+    def _checkpoints(self) -> Iterator[CheckpointMeta]:
+        metadata = self.read_master()
+        if metadata is not None:
+            yield metadata
+        for path in Path(self.snapshot_dir).glob("*.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            archived = _from_dict(payload)
+            if archived is not None:
+                yield archived
 
     def _matches(self, metadata: CheckpointMeta | None, target: RecoveryTarget) -> bool:
         if metadata is None or not metadata.completed or not metadata.snapshot_path:

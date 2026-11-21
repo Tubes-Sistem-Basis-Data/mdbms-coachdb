@@ -41,6 +41,12 @@ class FakeStorageManager:
 
 
 class _GagalRebuildStorageManager(FakeStorageManager):
+    def snapshot_to(self, path: str) -> None:
+        self.backup = self.rows.copy()
+
+    def restore_from(self, path: str) -> None:
+        self.rows = self.backup
+
     def rebuild_indexes(self) -> None:
         self.calls.append("rebuild_indexes")
         raise StorageError("gagal rebuild index")
@@ -304,7 +310,7 @@ class TestRestoreFailure(PITRTestCase):
                 self.assertEqual(sm.calls, [])
                 self.assertEqual(self.frm.read_log(), before)
 
-    def test_rebuild_index_gagal_menggagalkan_restore_tanpa_checkpoint(self) -> None:
+    def test_rebuild_index_gagal_mempertahankan_data_dan_wal(self) -> None:
         rid = RID("student", 0, 1)
         sm = _GagalRebuildStorageManager({rid: [1, "old"]})
         self.frm.set_dependencies(sm, FakeConcurrencyControl())
@@ -321,15 +327,14 @@ class TestRestoreFailure(PITRTestCase):
         )
         self._write(LogKind.COMMIT, 2)
         sm.rows[rid] = [1, "new"]
+        before = self.frm.read_log()
 
         result = self.frm.recover_to(RecoveryTarget(tx_id=1))
 
         self.assertFalse(result.ok)
         self.assertIn("gagal rebuild index", result.message)
-        kinds = [record.kind for record in self.frm.read_log()]
-        self.assertIn(LogKind.RESTORE, kinds)
-        self.assertNotIn(LogKind.CHECKPOINT_BEGIN, kinds)
-        self.assertNotIn(LogKind.CHECKPOINT_END, kinds)
+        self.assertEqual(sm.rows, {rid: [1, "new"]})
+        self.assertEqual(self.frm.read_log(), before)
 
     def test_recover_to_tanpa_dependensi_gagal(self) -> None:
         result = self.frm.recover_to(RecoveryTarget(tx_id=1))

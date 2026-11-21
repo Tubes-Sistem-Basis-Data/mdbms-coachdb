@@ -3,7 +3,9 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
+from common.errors import StorageError
 from common.log import LogKind
 from common.storage import RID
 from common.transaction import NO_RECORD, ChangeOp
@@ -162,6 +164,9 @@ class FakeStorageManager:
         self.calls.append(("delete", rid))
         self.rows.pop(rid, None)
 
+    def flush(self) -> None:
+        pass
+
 
 class RollbackManagerEfekTest(unittest.TestCase):
     """Memastikan rollback benar-benar mengubah isi SM, bukan hanya DONE."""
@@ -263,6 +268,19 @@ class RollbackManagerEfekTest(unittest.TestCase):
             [record.kind for record in self.reader.read_log(self.tx_id)],
             [LogKind.BEGIN, LogKind.ABORT_REQUEST, LogKind.ABORT],
         )
+
+    def test_flush_gagal_menahan_marker_abort_sampai_retry(self) -> None:
+        rid = RID("student", 1, 1)
+        self.sm.rows[rid] = [1]
+        self.catat(ChangeOp.INSERT, rid, NO_RECORD, [1])
+
+        with patch.object(self.sm, "flush", side_effect=StorageError("flush gagal")):
+            with self.assertRaisesRegex(StorageError, "flush gagal"):
+                self.manager.rollback(self.tx_id)
+        self.assertIs(self.reader.read_log(self.tx_id)[-1].kind, LogKind.ABORT_REQUEST)
+
+        self.assertEqual(self.manager.rollback(self.tx_id), RollbackResult.DONE)
+        self.assertIs(self.reader.read_log(self.tx_id)[-1].kind, LogKind.ABORT)
 
     def test_transaksi_committed_tidak_menyentuh_sm(self) -> None:
         self.writer.log_commit(self.tx_id)

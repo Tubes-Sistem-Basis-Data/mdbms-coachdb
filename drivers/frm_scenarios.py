@@ -116,7 +116,7 @@ class _FRMScenarioCatalog:
                        self._rollback_crud, {
                            "ok": True, "status": "ABORTED", "inserted": None,
                            "updated": [2, "old"], "deleted": [3, "old"],
-                           "undo_calls": ["insert", "update", "delete"],
+                           "undo_calls": ["insert", "update", "delete", "flush"],
                            "log_tail": ["ABORT_REQUEST", "ABORT"],
                        }),
             self._case("rollback-repeat", "FR-04", "Repeated rollback does not repeat changes",
@@ -274,7 +274,7 @@ class _FRMScenarioCatalog:
         first = frm.rollback(1)
         calls = list(sm.calls)
         log_count = len(frm.read_log(1))
-        first_undid_once = rid not in sm.rows and calls == ["delete"]
+        first_undid_once = rid not in sm.rows and calls == ["delete", "flush"]
         second = frm.rollback(1)
         context.notes.append("The second rollback does not repeat SM operations or log entries")
         return {

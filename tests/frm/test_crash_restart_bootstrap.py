@@ -34,6 +34,8 @@ args = main.parse_args(
 qp = main.bootstrap(args)
 session = qp.open_session()
 for sql in payload["sqls"]:
+    if payload["flush_before_abort"] and sql == "ABORT;":
+        qp._sm.flush()
     result = qp.execute_query(sql, session)
     if not result.ok:
         sys.stderr.write(f"SQL failed: {sql!r} -> {result.message}\\n")
@@ -71,6 +73,8 @@ def run_crash(
     protocol: str,
     sqls: list[str],
     flush_sm: bool,
+    *,
+    flush_before_abort: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Run SQLs in a subprocess via main.bootstrap and crash with os._exit(0)."""
     payload = json.dumps(
@@ -79,6 +83,7 @@ def run_crash(
             "protocol": protocol,
             "sqls": list(sqls),
             "flush_sm": bool(flush_sm),
+            "flush_before_abort": flush_before_abort,
         }
     )
     proc = subprocess.run(
@@ -120,6 +125,22 @@ class TestCrashRestartBootstrap(unittest.TestCase):
         tx_ids = [record.tx_id for record in qp._frm.read_log() if record.tx_id is not None]
         self.assertTrue(tx_ids, "Expected at least one transaction record in WAL")
         return max(tx_ids)
+
+    def test_abort_undo_remains_on_disk_after_crash(self) -> None:
+        for protocol in PROTOCOLS:
+            with self.subTest(protocol=protocol), TemporaryDirectory() as tmpdir:
+                prepare_data_dir(tmpdir, initial_rows=[[1, "Awal"]])
+                run_crash(
+                    tmpdir, protocol,
+                    ["BEGIN;", "UPDATE student SET name = 'BelumCommit' WHERE id = 1;", "ABORT;"],
+                    flush_sm=False, flush_before_abort=True,
+                )
+
+                qp = bootstrap_runtime(tmpdir, protocol)
+                try:
+                    self.assertEqual(self._select_student_rows(qp), [[1, "Awal"]])
+                finally:
+                    main.close_runtime(qp)
 
     def test_committed_redo_after_crash(self) -> None:
         for protocol in PROTOCOLS:
