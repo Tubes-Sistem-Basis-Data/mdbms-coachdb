@@ -31,7 +31,10 @@ class TestExplain(unittest.TestCase):
     def test_format_sebelum_sesudah(self) -> None:
         qo = QueryOptimizerFacade(None)
         qo._cost_model = _CountingCost()
-        self.assertEqual(qo.explain(_select()), "\n".join([
+        # tanpa SM binder gagal, optimize_query kembali ke plan asli dan mencatat warning
+        with self.assertLogs("query_optimizer.optimizer", level="WARNING"):
+            hasil = qo.explain(_select())
+        self.assertEqual(hasil, "\n".join([
             "SEBELUM (biaya 2 blok)",
             "Project [*]",
             "  TableScan [student]",
