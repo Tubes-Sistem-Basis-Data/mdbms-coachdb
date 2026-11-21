@@ -257,26 +257,53 @@ class SlottedPage:
 
         hdr = SlottedPage.read_header(buf)
         data_len = len(data)
+        off = SlottedPage._slot_offset(hdr.record_size, slot)
 
-        free_space = struct.unpack_from(SlottedPage.FREE_SPACE_PTR_FORMAT, buf, SlottedPage.FREE_SPACE_PTR_OFFSET)[0]
+        # Lakukan penulisan in-place jika slot sudah bersifat live dan ukuran data baru masih lebih kecil dibanding ukuran data lama
+        # selain itu maka penulisan dilakukan secara menyalin
+        if slot < hdr.slot_count and SlotStatus(buf[off]) == SlotStatus.LIVE:
+            old_offset, old_len = struct.unpack_from(SlottedPage.SLOT_PTR_FORMAT, buf, off + 1)
+            if data_len <= old_len:
+                buf[old_offset : old_offset + data_len] = data
+                struct.pack_into(SlottedPage.SLOT_PTR_FORMAT, buf, off + 1, old_offset, data_len)
+                return
 
+        # Kebutuhan ruang direktori dan seluruh record yang bersifat live
         req_slot_count = max(hdr.slot_count, slot + 1)
         dir_end = SlottedPage.DIR_START_OFFSET + (req_slot_count * SlottedPage.SLOT_DIR_ENTRY_SIZE)
 
+        total_payload = data_len
+        for s in range(hdr.slot_count):
+            if s == slot:
+                continue
+            s_off = SlottedPage._slot_offset(hdr.record_size, s)
+            if SlotStatus(buf[s_off]) == SlotStatus.LIVE:
+                _, d_len = struct.unpack_from(SlottedPage.SLOT_PTR_FORMAT, buf, s_off + 1)
+                total_payload += d_len
+
+        if dir_end + total_payload > len(buf):
+            raise ValueError(
+                f"Not enough space to write into slot (slot={slot}, dir_end={dir_end}, total_payload={total_payload}, block_size={len(buf)})"
+            )
+
+        free_space = struct.unpack_from(SlottedPage.FREE_SPACE_PTR_FORMAT, buf, SlottedPage.FREE_SPACE_PTR_OFFSET)[0]
+
+        # Jika ruang bebas yang kontinu tidak cukup mungkin sebenarnya masih ada space tetapi terlale ter-fragmentasi, maka coba lakukan defragmentasi
         if free_space - data_len < dir_end:
-            raise ValueError(f"Not enough space to write into slot (slot={slot}, free_space={free_space}, data_len={data_len}, data={data})")
+            SlottedPage.defragment(buf, excluding_slot=slot if slot < hdr.slot_count else None)
+            free_space = struct.unpack_from(SlottedPage.FREE_SPACE_PTR_FORMAT, buf, SlottedPage.FREE_SPACE_PTR_OFFSET)[0]
 
         new_free = free_space - data_len
         buf[new_free : free_space] = data
 
-        off = SlottedPage._slot_offset(hdr.record_size, slot)
         buf[off] = SlotStatus.LIVE.value
         struct.pack_into(SlottedPage.SLOT_PTR_FORMAT, buf, off + 1, new_free, data_len)
-
         struct.pack_into(SlottedPage.FREE_SPACE_PTR_FORMAT, buf, SlottedPage.FREE_SPACE_PTR_OFFSET, new_free)
 
         if slot >= hdr.slot_count:
-            buf[:SlottedPage.HEADER_FORMAT.size] = SlottedPage.HEADER_FORMAT.pack(hdr.page_id, hdr.page_lsn, slot + 1, hdr.record_size, hdr.checksum)
+            buf[:SlottedPage.HEADER_FORMAT.size] = SlottedPage.HEADER_FORMAT.pack(
+                hdr.page_id, hdr.page_lsn, slot + 1, hdr.record_size, hdr.checksum
+            )
 
     @staticmethod
     def mark_tombstone(buf: bytearray, slot: int) -> None:
@@ -312,7 +339,14 @@ class SlottedPage:
         available_space = free_space - dir_end
 
         if available_space < SlottedPage.SLOT_DIR_ENTRY_SIZE + hdr.record_size:
-            return None
+
+            # Jika space tersisa kurang dari yang dibutuhkan, mungkin masih cukup sebenarnya tetapi terfragmentasi
+            SlottedPage.defragment(buf)
+
+            free_space = struct.unpack_from(SlottedPage.FREE_SPACE_PTR_FORMAT, buf, SlottedPage.FREE_SPACE_PTR_OFFSET)[0]
+            available_space = free_space - dir_end
+            if available_space < SlottedPage.SLOT_DIR_ENTRY_SIZE + hdr.record_size: 
+                return None # Jika masih belum cukup maka memang benar storage habis
 
         return hdr.slot_count
 
@@ -335,3 +369,39 @@ class SlottedPage:
 
         usable_size = block_size - SlottedPage.DIR_START_OFFSET
         return max(0, usable_size // (SlottedPage.SLOT_DIR_ENTRY_SIZE + record_size))
+
+
+    @staticmethod
+    def defragment(buf: bytearray, excluding_slot: Optional[int] = None) -> None:
+        """
+        @brief Melakukan defragmentasi page dengan memadatkan seluruh record yang masih bersifat live ke batas akhir buffer. Fragmentasi banyak terjadi saat soft delete.
+
+        @param buf (bytearray) buffer dari page
+        @param excluding_slot (Optional[int]) slot yang datanya diabaikan dari proses defragmentasi (misalnya kalo ada heuristik akan segera ditimpa)
+
+        @return None
+        """
+        hdr = SlottedPage.read_header(buf)
+        records: list[tuple[int, int, bytes]] = []
+
+        for s in range(hdr.slot_count):
+            if s == excluding_slot:
+                continue
+
+            s_off = SlottedPage._slot_offset(hdr.record_size, s)
+            if SlotStatus(buf[s_off]) == SlotStatus.LIVE: # Ambil jika live, untuk didefragmentasi
+                d_off, d_len = struct.unpack_from(SlottedPage.SLOT_PTR_FORMAT, buf, s_off + 1)
+                records.append((s, d_off, bytes(buf[d_off : d_off + d_len])))
+
+        # Defragmentasi diurutkan berdasarkan data_offset awal menurun
+        records.sort(key=lambda item: item[1], reverse=True)
+
+        # Lakukan defragmentasi dengan proses menulis data dari awal page seperti membuat linked-list 
+        curr_ptr = len(buf)
+        for s, _, data in records:
+            curr_ptr -= len(data)
+            buf[curr_ptr : curr_ptr + len(data)] = data
+            s_off = SlottedPage._slot_offset(hdr.record_size, s)
+            struct.pack_into(SlottedPage.SLOT_PTR_FORMAT, buf, s_off + 1, curr_ptr, len(data))
+
+        struct.pack_into(SlottedPage.FREE_SPACE_PTR_FORMAT, buf, SlottedPage.FREE_SPACE_PTR_OFFSET, curr_ptr)
