@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime
 import logging
 import re
@@ -23,6 +24,7 @@ from common.log import RecoveryTarget
 from common.plan import ParsedQuery, QueryKind, TransactionCommand
 from common.result import ExecutionResult
 from common.transaction import Action
+from query_processor.administration import AdministrationGate
 from query_processor.context import ExecContext
 from query_processor.ddl import DDLCoordinator
 from query_processor.errors import PlanError
@@ -60,11 +62,13 @@ class MetaCommandHandler:
         frm: FailureRecoveryManager | None = None,
         ccm: ConcurrencyControlManager | None = None,
         admin_lock: RLock | None = None,
+        gate: AdministrationGate | None = None,
     ) -> None:
         self._qo = qo
         self._frm = frm
         self._ccm = ccm
         self._admin_lock = admin_lock or RLock()
+        self._gate = gate
 
     def explain(self, parsed: ParsedQuery | str) -> ExecutionResult:
         if isinstance(parsed, str):
@@ -128,7 +132,8 @@ class MetaCommandHandler:
 
     def restore(self, target: RecoveryTarget, session: Session) -> ExecutionResult:
         self.require_outside_tx(session)
-        with self._admin_lock:
+        guard = self._gate.exclusive() if self._gate is not None else nullcontext()
+        with self._admin_lock, guard:
             self.require_outside_tx(session)
             if self._frm is None:
                 return ExecutionResult(ok=False, message="ERROR [INTERNAL]: Failure Recovery Manager tidak tersedia")
@@ -168,17 +173,22 @@ class QueryProcessorFacade(QueryProcessor):
         self._translator = translator or PlanTranslator()
         self._transactions = transactions or TransactionCoordinator(ccm)
         self._formatter = ResultFormatter()
+        self._sessions = sessions or SessionManager()
+        self._administration = AdministrationGate(self._sessions)
         self._ddl = ddl or DDLCoordinator(
             transactions=self._transactions,
+            allow_ddl=frm is not None,
             formatter=self._formatter,
+            gate=self._administration,
+            checkpoint=(lambda: frm.checkpoint()) if frm is not None else None,
         )
         self._meta = meta or MetaCommandHandler(
             qo=qo,
             frm=frm,
             ccm=ccm,
             admin_lock=self._ddl.admin_lock,
+            gate=self._administration,
         )
-        self._sessions = sessions or SessionManager()
         self._closing = False
         self._storage_closed = False
         self._closed = False
@@ -222,6 +232,13 @@ class QueryProcessorFacade(QueryProcessor):
         self._sessions.close_session(session_id)
 
     def execute_query(self, sql: str, session: Session) -> ExecutionResult:
+        try:
+            with self._administration.request():
+                return self._execute_query(sql, session)
+        except MdbmsError as exc:
+            return ExecutionResult(ok=False, message=self._formatter.format_error(exc))
+
+    def _execute_query(self, sql: str, session: Session) -> ExecutionResult:
         if self._closing:
             return ExecutionResult(ok=False, message="ERROR: Query Processor sudah ditutup")
         if session is not None:
