@@ -7,7 +7,7 @@ from typing import Any
 from common.plan import PlanNode
 
 from common.plan import TableScan, IndexScan, Filter, Project, Join, Sort, Limit, SubqueryScan, Insert, Update, Delete, CreateIndex, CreateTable, DropTable
-from common.expression import Expression, ColumnRef, Literal, BinaryOp, Comparison, And, Subquery
+from common.expression import CompOp, Expression, ColumnRef, Literal, BinaryOp, Comparison, And, Subquery
 
 class PlanPrinter:
     """Mengubah pohon PlanNode jadi teks berindentasi. Dipakai QueryOptimizer.explain."""
@@ -38,11 +38,14 @@ class PlanPrinter:
                 if node.key is not None:
                     return awal + f"{kolom} {node.op.value} {node.key!r}]"
                 bagian = []
+                # op menentukan sisi yang ketat: GT untuk batas bawah, LT untuk batas atas
                 if node.low is not None:
-                    bagian.append(f"{node.low!r} <=")
+                    batas_bawah = "<" if node.op is CompOp.GT else "<="
+                    bagian.append(f"{node.low!r} {batas_bawah}")
                 bagian.append(kolom)
                 if node.high is not None:
-                    bagian.append(f"<= {node.high!r}")
+                    batas_atas = "<" if node.op is CompOp.LT else "<="
+                    bagian.append(f"{batas_atas} {node.high!r}")
                 return awal + " ".join(bagian) + "]"
             case Filter():
                 return f"Filter [{self._render_expr(node.condition)}]"

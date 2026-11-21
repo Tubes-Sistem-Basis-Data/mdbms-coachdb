@@ -2,7 +2,7 @@ import unittest
 
 from common.catalog import ColumnSchema, DataType, TableSchema
 from common.expression import ColumnRef, Comparison, CompOp, Literal
-from common.plan import Filter, Join, JoinKind, ParsedQuery, Project, QueryKind, Sort, TableScan
+from common.plan import Filter, Join, JoinKind, ParsedQuery, Project, QueryKind, Sort, SubqueryScan, TableScan
 from query_optimizer.projection_rewriter import ProjectionRewriter
 from query_processor.translator import PlanTranslator
 from tests.qp.fakes import FakeCtx, FakeSM
@@ -57,8 +57,35 @@ class TestProjectionRewriter(unittest.TestCase):
         self.assertEqual(result.children[0].output_columns, [name, age])
         self.assertEqual(sort_project.children[0].output_columns, [name, age, nilai])
         self.assertEqual(rewritten_join.output_columns, [name, age, nilai, pendaftaran_id])
-        self.assertEqual(rewritten_join.children[0].columns, [name, age, nilai])
+        # sisi kiri membawa semua kolomnya, jadi Project identitas dihapus
+        self.assertIsInstance(rewritten_join.children[0], TableScan)
         self.assertEqual(rewritten_join.children[1].columns, [pendaftaran_id])
+
+    # Memastikan Project yang kolomnya sama persis dengan keluaran anaknya tidak dipasang
+    def test_identity_project_is_dropped(self) -> None:
+        kode = ColumnRef("course", "kode")
+        sks = ColumnRef("course", "sks")
+        condition = Comparison(CompOp.GT, sks, Literal(2, DataType.INTEGER))
+        scan = TableScan(table="course", output_columns=[kode, sks])
+        original = Project(columns=[kode, sks], children=[Filter(condition=condition, children=[scan])])
+
+        result = self.rewriter.apply(original)
+
+        self.assertIsInstance(result, Project)
+        self.assertIsInstance(result.children[0], Filter)
+        self.assertIsInstance(result.children[0].children[0], TableScan)
+
+    # Project di bawah SubqueryScan adalah akar plan subquery, tidak boleh ikut dihapus
+    def test_project_under_subquery_scan_is_kept(self) -> None:
+        kode = ColumnRef("course", "kode")
+        scan = TableScan(table="course", output_columns=[kode])
+        inner = Project(columns=[kode], children=[scan], output_columns=[kode])
+        derived = SubqueryScan(alias="q", children=[inner])
+        original = Project(columns=[ColumnRef("q", "kode")], children=[derived])
+
+        result = self.rewriter.apply(original)
+
+        self.assertIsInstance(result.children[0].children[0], Project)
 
     # Memastikan kolom kondisi Join tetap dibawa walaupun tidak ditampilkan
     def test_preserve_join_columns(self) -> None:

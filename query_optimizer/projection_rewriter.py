@@ -1,7 +1,7 @@
 from copy import deepcopy
 
 from common.expression import And, BinaryOp, ColumnRef, Comparison, Expression
-from common.plan import Filter, IndexScan, Join, JoinKind, PlanNode, Project, Sort, SubqueryScan, TableScan
+from common.plan import Filter, IndexScan, Join, JoinKind, Limit, PlanNode, Project, Sort, SubqueryScan, TableScan
 
 class ProjectionRewriter:
     def apply(self, plan: PlanNode) -> PlanNode:
@@ -9,7 +9,27 @@ class ProjectionRewriter:
         result = deepcopy(plan)
         result = self._merge_projects(result)
         result = self._push_down(result)
-        return self._merge_projects(result)
+        result = self._merge_projects(result)
+        return self._drop_identity_projects(result)
+
+    def _drop_identity_projects(self, plan: PlanNode) -> PlanNode:
+        """Hapus Project (selain akar) yang kolomnya sama persis dengan keluaran anaknya
+
+        Project di bawah Limit atau SubqueryScan dipertahankan karena QP menganggapnya akar plan SELECT.
+        """
+        keeps_child_project = isinstance(plan, (Limit, SubqueryScan))
+        for index, child in enumerate(plan.children):
+            child = self._drop_identity_projects(child)
+            is_identity = (
+                not keeps_child_project
+                and isinstance(child, Project)
+                and not child.aliases
+                and len(child.children) == 1
+                and child.columns
+                and list(child.columns) == list(child.children[0].output_columns)
+            )
+            plan.children[index] = child.children[0] if is_identity else child
+        return plan
 
     def _merge_projects(self, plan: PlanNode) -> PlanNode:
         """Menggabungkan Project yang  berurutan"""

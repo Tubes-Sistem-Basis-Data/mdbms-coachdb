@@ -105,6 +105,8 @@ class QueryOptimizerFacade(QueryOptimizer):
         # join rule lebih dulu supaya kondisi antar tabel jadi kondisi join sebelum seleksi didorong
         plan = self._join_rule.apply(plan)
         plan = self._selection.apply(plan)
+        # push-down bisa menurunkan kondisi antar tabel ke Cartesian dalam, ulangi supaya jadi join
+        plan = self._join_rule.apply(plan)
         return self._projection.apply(plan)
 
     def _plan_cost(self, plan: PlanNode) -> float:

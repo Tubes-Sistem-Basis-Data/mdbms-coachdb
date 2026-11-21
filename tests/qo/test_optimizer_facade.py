@@ -99,6 +99,21 @@ class TestOptimize(FacadeCase):
         self.assertLessEqual(optimized.estimated_cost, before)
         self.assertEqual(optimized.plan.columns, [ColumnRef("student", "name")])
 
+    def test_tiga_tabel_tanpa_join_tidak_menyisakan_cross(self) -> None:
+        parsed = self.qo.parse_query(
+            "SELECT * FROM student, enrollment, course "
+            "WHERE student.id = enrollment.student_id AND enrollment.course_id = course.id "
+            "AND student.gpa > 3.0;")
+        optimized = self.qo.optimize_query(parsed)
+        kinds = []
+        nodes = [optimized.plan]
+        while nodes:
+            node = nodes.pop()
+            if isinstance(node, Join):
+                kinds.append(node.kind)
+            nodes.extend(node.children)
+        self.assertEqual(kinds, [JoinKind.THETA, JoinKind.THETA])
+
     def test_update_tetap_scan_dengan_filter(self) -> None:
         optimized = self.qo.optimize_query(self.qo.parse_query("UPDATE student SET gpa = 4.0 WHERE id = 1 AND gpa < 2.0;"))
         self.assertIsInstance(optimized.plan, Update)
