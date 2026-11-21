@@ -57,7 +57,7 @@ class PITRTestCase(unittest.TestCase):
         self.assertTrue(result.ok, result.message)
         return tx_id, rid
 
-    def _update(self, rid: RID, values: list) -> int:
+    def _update(self, rid: RID, values: list, *, abort: bool = False) -> int:
         tx_id = self.ccm.begin_transaction()
         before = self.sm.fetch("student", rid)
         self.assertIsNotNone(before)
@@ -67,7 +67,7 @@ class PITRTestCase(unittest.TestCase):
         )
         self.assertIs(access.status, AccessStatus.ALLOWED, access.message)
         self.sm.update("student", rid, values, access.lsn)
-        result = self.ccm.commit(tx_id)
+        result = self.ccm.abort(tx_id) if abort else self.ccm.commit(tx_id)
         self.assertTrue(result.ok, result.message)
         return tx_id
 
@@ -86,6 +86,17 @@ class PITRTestCase(unittest.TestCase):
         return tx_id
 
 class TestPITR(PITRTestCase):
+    def test_restore_preserves_committed_update_after_aborted_update(self) -> None:
+        _, rid = self._insert([1, "Awal"])
+        self._update(rid, [1, "Batal"], abort=True)
+        target_tx = self._update(rid, [1, "Tersimpan"])
+        self._update(rid, [1, "Sesudah Target"])
+
+        result = self.frm.recover_to(RecoveryTarget(tx_id=target_tx))
+
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual([row.values for row in self.sm.scan("student")], [[1, "Tersimpan"]])
+
     def test_restore_to_tx_uses_real_sm_and_rebuilds_index(self) -> None:
         tx1, rid = self._insert([1, "Ani"])
         self.assertEqual(tx1, 1)

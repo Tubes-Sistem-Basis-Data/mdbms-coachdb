@@ -51,7 +51,7 @@ class PITRManager:
             if boundary is None:
                 return RestoreResult(
                     ok=False,
-                    message=f"Transaksi T{target.tx_id} tidak ditemukan di WAL",
+                    message=f"Catatan COMMIT untuk transaksi T{target.tx_id} tidak ditemukan di WAL",
                 )
 
             committed = {
@@ -61,11 +61,17 @@ class PITRManager:
                 and record.tx_id is not None
                 and record.lsn <= boundary
             }
+            aborted = {
+                record.tx_id
+                for record in records
+                if record.kind is LogKind.ABORT
+            }
             undo_records = [
                 record
                 for record in records
                 if record.kind is LogKind.DATA
                 and record.change is not None
+                and record.tx_id not in aborted
                 and (record.lsn > boundary or record.tx_id not in committed)
             ]
             for record in sorted(undo_records, key=lambda item: item.lsn, reverse=True):
@@ -83,12 +89,11 @@ class PITRManager:
     @staticmethod
     def _boundary(records: list[LogRecord], target: RecoveryTarget) -> int | None:
         if target.tx_id is not None:
-            target_records = [
-                record for record in records if record.tx_id == target.tx_id
-            ]
-            if not target_records:
-                return None
-            return max(record.lsn for record in target_records)
+            return max(
+                (record.lsn for record in records
+                 if record.tx_id == target.tx_id and record.kind is LogKind.COMMIT),
+                default=None,
+            )
 
         timestamp = target.timestamp
         return max(

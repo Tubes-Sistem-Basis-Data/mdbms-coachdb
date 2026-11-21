@@ -279,6 +279,31 @@ class TestRestoreFailure(PITRTestCase):
         self.assertEqual(len(self.frm.read_log()), before)
         self.assertFalse(self._restore_positions())
 
+    def test_target_tanpa_commit_ditolak_sebelum_mengubah_data(self) -> None:
+        rid = RID("student", 0, 1)
+        sm, _ = self._dependencies({rid: [1, "saved"]})
+        self._write(LogKind.BEGIN, 1)
+        self._write(
+            LogKind.DATA, 1,
+            self._change(rid, ChangeOp.UPDATE, [1, "old"], [1, "aborted"]),
+        )
+        self._write(LogKind.ABORT, 1)
+        self._write(LogKind.BEGIN, 2)
+        self._write(LogKind.COMMIT, 2)
+        self._write(LogKind.BEGIN, 3)
+        self._write(LogKind.ABORT_REQUEST, 3)
+        before = self.frm.read_log()
+
+        for tx_id in (1, 3):
+            with self.subTest(tx_id=tx_id):
+                result = self.frm.recover_to(RecoveryTarget(tx_id=tx_id))
+
+                self.assertFalse(result.ok, result.message)
+                self.assertIn("COMMIT", result.message)
+                self.assertEqual(sm.rows, {rid: [1, "saved"]})
+                self.assertEqual(sm.calls, [])
+                self.assertEqual(self.frm.read_log(), before)
+
     def test_rebuild_index_gagal_menggagalkan_restore_tanpa_checkpoint(self) -> None:
         rid = RID("student", 0, 1)
         sm = _GagalRebuildStorageManager({rid: [1, "old"]})

@@ -247,6 +247,41 @@ class TestCrashRestartBootstrap(unittest.TestCase):
                     finally:
                         main.close_runtime(qp)
 
+    def test_restore_preserves_committed_insert_reusing_rid_after_crash(self) -> None:
+        for protocol in PROTOCOLS:
+            with self.subTest(protocol=protocol), TemporaryDirectory() as tmpdir:
+                prepare_data_dir(tmpdir)
+                run_crash(
+                    tmpdir, protocol,
+                    ["BEGIN;", "INSERT INTO student VALUES (1, 'Uncommitted');"],
+                    flush_sm=False,
+                )
+                qp = bootstrap_runtime(tmpdir, protocol)
+                session = qp.open_session()
+                try:
+                    records = qp._frm.read_log()
+                    aborted = next(record for record in records if record.kind is LogKind.ABORT)
+                    old_insert = next(record for record in records
+                                      if record.tx_id == aborted.tx_id and record.kind is LogKind.DATA)
+
+                    begin = qp.execute_query("BEGIN;", session)
+                    self.assertTrue(begin.ok, begin.message)
+                    target_tx = session.tx_id
+                    for statement in ("INSERT INTO student VALUES (2, 'Committed');", "COMMIT;"):
+                        result = qp.execute_query(statement, session)
+                        self.assertTrue(result.ok, result.message)
+                    new_insert = next(record for record in qp._frm.read_log(target_tx)
+                                      if record.kind is LogKind.DATA)
+                    self.assertEqual(new_insert.change.rid, old_insert.change.rid)
+
+                    restore = qp.execute_query(f"RESTORE TO TX {target_tx};", session)
+
+                    self.assertTrue(restore.ok, restore.message)
+                    self.assertEqual(self._select_student_rows(qp), [[2, "Committed"]])
+                finally:
+                    qp.close_session(session.session_id)
+                    main.close_runtime(qp)
+
 
 if __name__ == "__main__":
     unittest.main()
