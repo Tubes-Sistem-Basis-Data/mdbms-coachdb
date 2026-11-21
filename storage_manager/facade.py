@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import threading
 from typing import Callable, Iterator
 
 from common import config
 from common.catalog import IndexInfo, TableSchema, TableStats
-from common.errors import IndexDefinitionError, StorageError
+from common.errors import (
+    IndexDefinitionError,
+    SchemaViolationError,
+    SemanticError,
+    StorageError,
+)
 from common.interfaces import StorageManager as StorageManagerBase
 from common.storage import RID, Row
 from storage_manager.buffer import BufferPool
@@ -21,6 +27,7 @@ from storage_manager.stats import StatisticsManager
 from storage_manager.types import Value
 
 CATALOG_FILE = "catalog.json"
+_TABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 class StorageManager(StorageManagerBase):
@@ -100,11 +107,45 @@ class StorageManager(StorageManagerBase):
 
     def create_table(self, schema: TableSchema) -> None:
         """Buat tabel baru dan catat di katalog. Dipanggil QP untuk CREATE TABLE."""
-        return None
+        if not isinstance(schema, TableSchema):
+            raise SchemaViolationError("create_table memerlukan TableSchema")
+        name = schema.name
+        if not isinstance(name, str) or not _TABLE_NAME.fullmatch(name):
+            raise SchemaViolationError(f"Nama tabel tidak valid: {name!r}")
+        with self._lock:
+            if name in self._catalog.list_tables():
+                raise SemanticError(f"Tabel sudah ada: {name}", name)
+            self._buffer.discard_table(name)
+            self._disk.delete_table_file(name)
+            self._disk.create_table_file(name)
+            try:
+                self._catalog.create_table(
+                    name,
+                    tuple(schema.columns),
+                    tuple(schema.primary_key),
+                    tuple(schema.foreign_keys),
+                )
+            except BaseException:
+                self._disk.delete_table_file(name)
+                raise
+            self._stats.forget(name)
+            self._records.forget_table(name)
+            try:
+                for info in schema.indexes:
+                    self.create_index(info)
+            except BaseException:
+                self.drop_table(name)
+                raise
 
     def drop_table(self, table: str) -> None:
         """Hapus tabel beserta index-nya. Dipanggil QP untuk DROP TABLE."""
-        return None
+        with self._lock:
+            dropped = self._catalog.drop_table(table)
+            self._index_manager.drop_indexes([info.name for info in dropped])
+            self._stats.forget(table)
+            self._records.forget_table(table)
+            self._buffer.discard_table(table)
+            self._disk.delete_table_file(table)
 
     def create_index(self, info: IndexInfo) -> None:
         """Bangun index dan catat di katalog. Dipanggil QP."""

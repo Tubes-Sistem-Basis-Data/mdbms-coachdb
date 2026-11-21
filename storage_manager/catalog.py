@@ -9,7 +9,13 @@ from enum import Enum
 from typing import Optional
 
 from common.catalog import ColumnSchema, DataType, ForeignKey, IndexInfo, IndexKind, TableSchema
-from common.errors import IndexDefinitionError, SchemaViolationError, StorageError, TableNotFoundError
+from common.errors import (
+    IndexDefinitionError,
+    SchemaViolationError,
+    SemanticError,
+    StorageError,
+    TableNotFoundError,
+)
 from storage_manager.serializer import RecordCodec
 
 
@@ -86,6 +92,42 @@ class Catalog:
             del self._record_size[name]
             raise
         return copy.deepcopy(schema)
+
+    def referencing_tables(self, table: str) -> list[str]:
+        """Tabel lain yang punya foreign key ke `table` (rujukan diri tidak dihitung)."""
+        return sorted(
+            name
+            for name, schema in self._tables.items()
+            if name != table and any(fk.ref_table == table for fk in schema.foreign_keys)
+        )
+
+    def drop_table(self, name: str) -> list[IndexInfo]:
+        """Hapus tabel dan index-nya dari katalog, kembalikan index yang ikut terhapus.
+
+        Ditolak jika masih dirujuk foreign key tabel lain: katalog dengan FK ke
+        tabel yang tidak ada akan gagal divalidasi saat `_load` berikutnya.
+        """
+        if name not in self._tables:
+            raise TableNotFoundError(f"Tabel tidak ditemukan: {name}", name)
+        referring = self.referencing_tables(name)
+        if referring:
+            raise SemanticError(
+                f"Tabel {name} masih dirujuk foreign key oleh: {', '.join(referring)}",
+                name,
+            )
+        old_tables, old_indexes, old_sizes = (
+            self._tables.copy(), self._indexes.copy(), self._record_size.copy()
+        )
+        schema = self._tables.pop(name)
+        del self._record_size[name]
+        for info in schema.indexes:
+            self._indexes.pop(info.name, None)
+        try:
+            self._persist()
+        except StorageError:
+            self._tables, self._indexes, self._record_size = old_tables, old_indexes, old_sizes
+            raise
+        return copy.deepcopy(schema.indexes)
 
     def register_index(self, info: IndexInfo) -> None:
         schema = self.get_table_schema(info.table)

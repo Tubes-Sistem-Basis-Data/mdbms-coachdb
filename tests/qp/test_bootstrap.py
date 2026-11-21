@@ -85,7 +85,6 @@ class TestBootstrap(unittest.TestCase):
                     self.assertTrue((directory / "wal.log").exists())
                 finally:
                     qp.close()
-                    qp._sm._disk.close()
 
     def test_cli_failure_still_closes_the_runtime(self) -> None:
         qp = Mock()

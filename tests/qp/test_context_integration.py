@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from common.catalog import ColumnSchema, DataType
+from common.catalog import ColumnSchema, DataType, TableSchema
 from common.errors import StorageError, TransactionAbortedError
 from common.log import LogKind, LogResult
 from common.transaction import AccessStatus, Action, ChangeOp, ResourceId, TxResult, TxStatus
@@ -26,14 +26,13 @@ class TestExecContextIntegration(unittest.TestCase):
         temp = TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.sm = StorageManager(data_dir=temp.name)
-        self.addCleanup(self.sm._disk.close)
-        # Setup lewat katalog karena facade create_table/close SM masih stub.
-        self.sm._catalog.create_table(
+        self.addCleanup(self.sm.close)
+        self.sm.create_table(TableSchema(
             "student",
-            (ColumnSchema("id", DataType.INTEGER, nullable=False),
-             ColumnSchema("name", DataType.VARCHAR, length=50)),
-            ("id",), (),
-        )
+            [ColumnSchema("id", DataType.INTEGER, nullable=False),
+             ColumnSchema("name", DataType.VARCHAR, length=50)],
+            primary_key=["id"],
+        ))
         self.original = [[1, "old"], [2, "two"]]
         self.sm.bulk_load("student", self.original)
         self.frm = FailureRecoveryManager(log_path=str(Path(temp.name) / "wal.log"))
@@ -44,8 +43,8 @@ class TestExecContextIntegration(unittest.TestCase):
         self.qp = QueryProcessorFacade(
             QueryOptimizerFacade(self.sm), self.sm, self.ccm, self.frm
         )
+        self.addCleanup(self.qp.close)
         self.session = self.qp.open_session()
-        self.addCleanup(self.qp.close_session, self.session.session_id)
 
     def execute_ok(self, sql: str):
         result = self.qp.execute_query(sql, self.session)

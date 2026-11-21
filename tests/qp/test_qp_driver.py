@@ -188,7 +188,7 @@ class TestDriverEntryPoint(unittest.TestCase):
 
 class TestDriverSQLIntegration(unittest.TestCase):
     def test_json_script_executes_real_sql_operators_and_reports_wrong_data(self) -> None:
-        from common.catalog import ColumnSchema, DataType
+        from common.catalog import ColumnSchema, DataType, TableSchema
         from failure_recovery.log import codec
         from storage_manager.facade import StorageManager
 
@@ -197,17 +197,18 @@ class TestDriverSQLIntegration(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             directory = Path(tmp) / "database"
             storage = StorageManager(str(directory))
-            for table, text_column, rows in (
-                ("student", "name", [[1, "Ada"], [2, "Budi"]]),
-                ("course", "title", [[1, "DB"], [2, "OS"]]),
-            ):
-                storage._catalog.create_table(table, (
-                    ColumnSchema("id", DataType.INTEGER, nullable=False),
-                    ColumnSchema(text_column, DataType.VARCHAR, length=50),
-                ), ("id",), ())
-                storage.bulk_load(table, rows)
-            storage._buffer.flush_all()
-            storage._disk.close()
+            try:
+                for table, text_column, rows in (
+                    ("student", "name", [[1, "Ada"], [2, "Budi"]]),
+                    ("course", "title", [[1, "DB"], [2, "OS"]]),
+                ):
+                    storage.create_table(TableSchema(table, [
+                        ColumnSchema("id", DataType.INTEGER, nullable=False),
+                        ColumnSchema(text_column, DataType.VARCHAR, length=50),
+                    ], primary_key=["id"]))
+                    storage.bulk_load(table, rows)
+            finally:
+                storage.close()
             steps = [
                 {"sql": "SELECT student.name, course.title FROM student JOIN course ON student.id = course.id ORDER BY student.id DESC;",
                  "expect_columns": ["name", "title"], "expect_rows": [["Budi", "OS"], ["Ada", "DB"]]},
@@ -238,7 +239,7 @@ class TestDriverSQLIntegration(unittest.TestCase):
                     self.assertIn(expected_status, output.getvalue())
             finally:
                 for instance in instances:
-                    instance._disk.close()
+                    instance.close()
 
 
 if __name__ == "__main__":

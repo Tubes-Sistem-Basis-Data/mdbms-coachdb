@@ -36,6 +36,10 @@ class StatisticsManager:
         self._cache.pop(table, None)
         self._row_count.pop(table, None)
 
+    def forget(self, table: str) -> None:
+        self._cache.pop(table, None)
+        self._row_count.pop(table, None)
+
     def recount(self, table: str) -> None:
         schema = self._catalog.get_table_schema(table)
         self.invalidate(table)

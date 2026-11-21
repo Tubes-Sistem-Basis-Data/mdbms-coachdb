@@ -99,5 +99,109 @@ class TestProjectionRewriter(unittest.TestCase):
 
         self.assertEqual(optimized_result, original_result)
 
+    # Memastikan tidak ada Project sisipan di antara Filter berantai dan tidak redundan saat semua kolom dipakai
+    def test_chained_filters_no_duplicate_or_redundant_project(self) -> None:
+        student_id = ColumnRef("student", "id")
+        name = ColumnRef("student", "name")
+        gpa = ColumnRef("student", "gpa")
+        scan = TableScan(table="student", output_columns=[student_id, name, gpa])
+        inner_filter = Filter(condition=Comparison(CompOp.GT, gpa, Literal(3.5, DataType.FLOAT)), children=[scan])
+        outer_filter = Filter(condition=Comparison(CompOp.GT, student_id, Literal(10, DataType.INTEGER)), children=[inner_filter])
+        original = Project(columns=[name], children=[outer_filter])
+
+        result = self.rewriter.apply(original)
+
+        # Semua kolom (id, name, gpa) dibutuhkan oleh Project + 2 Filter, jadi tidak perlu Project di bawah Filter
+        self.assertIsInstance(result, Project)
+        self.assertIsInstance(result.children[0], Filter)
+        self.assertIsInstance(result.children[0].children[0], Filter)
+        self.assertIsInstance(result.children[0].children[0].children[0], TableScan)
+
+    # Memastikan rantai Filter yang memang mengurangi kolom hanya menyisipkan satu Project di bawah Filter terakhir
+    def test_chained_filters_single_project_when_pruning(self) -> None:
+        student_id = ColumnRef("student", "id")
+        name = ColumnRef("student", "name")
+        gpa = ColumnRef("student", "gpa")
+        scan = TableScan(table="student", output_columns=[student_id, name, gpa])
+        inner_filter = Filter(condition=Comparison(CompOp.GT, gpa, Literal(3.0, DataType.FLOAT)), children=[scan])
+        outer_filter = Filter(condition=Comparison(CompOp.LT, gpa, Literal(4.0, DataType.FLOAT)), children=[inner_filter])
+        original = Project(columns=[name], children=[outer_filter])
+
+        result = self.rewriter.apply(original)
+
+        self.assertIsInstance(result, Project)
+        first_filter = result.children[0]
+        second_filter = first_filter.children[0]
+        pushed_project = second_filter.children[0]
+        self.assertIsInstance(first_filter, Filter)
+        self.assertIsInstance(second_filter, Filter)
+        self.assertIsInstance(pushed_project, Project)
+        self.assertEqual(pushed_project.columns, [name, gpa])
+        self.assertIsInstance(pushed_project.children[0], TableScan)
+
+    # Memastikan SELECT * dengan Filter pada TableScan tanpa index tidak membuat Project dobel di bawah Filter
+    def test_select_all_filter_no_redundant_project(self) -> None:
+        student_id = ColumnRef("student", "id")
+        name = ColumnRef("student", "name")
+        gpa = ColumnRef("student", "gpa")
+        scan = TableScan(table="student", output_columns=[student_id, name, gpa])
+        filter_node = Filter(condition=Comparison(CompOp.EQ, student_id, Literal(7, DataType.INTEGER)), children=[scan])
+        original = Project(columns=[student_id, name, gpa], children=[filter_node])
+
+        result = self.rewriter.apply(original)
+
+        self.assertIsInstance(result, Project)
+        self.assertIsInstance(result.children[0], Filter)
+        self.assertIsInstance(result.children[0].children[0], TableScan)
+
+    # Memastikan Sort + Filter dengan kolom kebutuhan sama tidak menghasilkan Project dobel mengapit Filter
+    def test_sort_above_filter_no_duplicate_project(self) -> None:
+        student_id = ColumnRef("student", "id")
+        name = ColumnRef("student", "name")
+        gpa = ColumnRef("student", "gpa")
+        scan = TableScan(table="student", output_columns=[student_id, name, gpa])
+        filter_node = Filter(condition=Comparison(CompOp.GT, gpa, Literal(3.5, DataType.FLOAT)), children=[scan])
+        sort_node = Sort(column=gpa, ascending=False, children=[filter_node])
+        original = Project(columns=[name], aliases=["nama"], children=[sort_node])
+
+        result = self.rewriter.apply(original)
+
+        self.assertIsInstance(result, Project)
+        self.assertEqual(result.aliases, ["nama"])
+        self.assertIsInstance(result.children[0], Sort)
+        self.assertIsInstance(result.children[0].children[0], Filter)
+        pushed_project = result.children[0].children[0].children[0]
+        self.assertIsInstance(pushed_project, Project)
+        self.assertEqual(pushed_project.columns, [name, gpa])
+        self.assertIsInstance(pushed_project.children[0], TableScan)
+
+    # Memastikan sisi Join dengan Filter tidak diapit dua Project identik
+    def test_join_side_filter_no_duplicate_project(self) -> None:
+        student_id = ColumnRef("student", "id")
+        name = ColumnRef("student", "name")
+        gpa = ColumnRef("student", "gpa")
+        dept = ColumnRef("student", "department")
+        enroll_sid = ColumnRef("enroll", "student_id")
+        grade = ColumnRef("enroll", "grade")
+
+        student_scan = TableScan(table="student", output_columns=[student_id, name, dept, gpa])
+        enroll_scan = TableScan(table="enroll", output_columns=[enroll_sid, grade])
+        student_filter = Filter(condition=Comparison(CompOp.GT, gpa, Literal(3.5, DataType.FLOAT)), children=[student_scan])
+        join = Join(
+            kind=JoinKind.THETA,
+            condition=Comparison(CompOp.EQ, student_id, enroll_sid),
+            children=[student_filter, enroll_scan],
+        )
+        original = Project(columns=[name, gpa, grade], children=[join])
+
+        result = self.rewriter.apply(original)
+        rewritten_join = result.children[0]
+        left_side = rewritten_join.children[0]
+
+        self.assertIsInstance(left_side, Filter)
+        self.assertIsInstance(left_side.children[0], Project)
+        self.assertEqual(left_side.children[0].columns, [name, gpa, student_id])
+        self.assertIsInstance(left_side.children[0].children[0], TableScan)
+
 if __name__ == "__main__":
     unittest.main()
