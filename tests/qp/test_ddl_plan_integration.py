@@ -27,7 +27,7 @@ class TestDDLPlanIntegration(unittest.TestCase):
         self.ccm.abort.side_effect = lambda tx: TxResult(tx, TxStatus.ABORTED, True)
         self.qo = QueryOptimizerFacade(self.sm)
         self.qp = QueryProcessorFacade(
-            qo=self.qo, sm=self.sm, ccm=self.ccm,
+            qo=self.qo, sm=self.sm, ccm=self.ccm, ddl=DDLCoordinator(allow_ddl=True),
         )
         self.session = self.qp.open_session()
 

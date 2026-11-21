@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from threading import RLock
 from typing import Callable
 
-from common.errors import MdbmsError
+from common.errors import LogError, MdbmsError
 from common.interfaces import Session
+from common.log import CheckpointResult
 from common.result import ExecutionResult
+from query_processor.administration import AdministrationGate
 from query_processor.result import ResultFormatter
 from query_processor.transactions import TransactionCoordinator
 
@@ -23,12 +26,16 @@ class DDLCoordinator:
         policy: Callable[[], bool] | None = None,
         formatter: ResultFormatter | None = None,
         admin_lock: RLock | None = None,
+        gate: AdministrationGate | None = None,
+        checkpoint: Callable[[], CheckpointResult] | None = None,
     ) -> None:
         self._transactions = transactions
         self._allow_ddl = allow_ddl if enabled is None else bool(enabled)
         self._policy = policy
         self._formatter = formatter or ResultFormatter()
         self._admin_lock = admin_lock or RLock()
+        self._gate = gate
+        self._checkpoint = checkpoint
 
     @property
     def admin_lock(self) -> RLock:
@@ -83,7 +90,19 @@ class DDLCoordinator:
                 )
 
             try:
-                result = work()
+                guard = self._gate.exclusive() if self._gate is not None else nullcontext()
+                with guard:
+                    # Semua DATA lama sudah durable dan berada sebelum batas redo ini.
+                    self._make_checkpoint("sebelum DDL")
+                    try:
+                        result = work()
+                    except Exception as error:
+                        try:
+                            self._make_checkpoint("setelah DDL gagal")
+                        except Exception as checkpoint_error:
+                            raise LogError(f"{error}; {checkpoint_error}") from error
+                        raise
+                    self._make_checkpoint("setelah DDL")
             except MdbmsError as exc:
                 return ExecutionResult(ok=False, message=self._formatter.format_error(exc))
             except Exception as exc:
@@ -105,3 +124,19 @@ class DDLCoordinator:
                 )
 
             return result
+
+    def _make_checkpoint(self, phase: str) -> None:
+        if self._checkpoint is None:
+            return
+        try:
+            result = self._checkpoint()
+        except Exception as exc:
+            raise LogError(f"Checkpoint {phase} gagal: {exc}") from exc
+        if (not isinstance(result, CheckpointResult) or not result.ok
+                or type(result.lsn) is not int or result.lsn <= 0):
+            if isinstance(result, CheckpointResult):
+                message = result.message or "hasil atau LSN tidak valid"
+            else:
+                message = "hasil tidak valid"
+            detail = " Perubahan schema mungkin sudah diterapkan." if phase != "sebelum DDL" else ""
+            raise LogError(f"Checkpoint {phase} gagal: {message}.{detail}")
