@@ -25,7 +25,7 @@ DEMO_QUERIES = [
     "BEGIN;",
     "SELECT * FROM course;",
     "ABORT;",
-    "EXPLAIN SELECT * FROM enrollment;",
+    "EXPLAIN SELECT * FROM enroll;",
     "SELECT * FROM dosen;",
     "SELECT name FROM student;",
 ]

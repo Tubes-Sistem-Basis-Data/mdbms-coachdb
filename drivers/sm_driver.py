@@ -13,39 +13,41 @@ import uuid
 from dataclasses import dataclass
 from typing import Callable
 
-from common.catalog import ColumnSchema, DataType, IndexInfo
+from common.catalog import ColumnSchema, DataType, IndexInfo, TableSchema
 from common.errors import MdbmsError
 from common.interfaces import StorageManager
 from common.storage import RID, Row
 
 
 def _seed_sample(sm: StorageManager) -> None:
-    """Isi tabel contoh driver. Facade DDL (create_table) masih stub."""
+    """Isi tabel contoh driver lewat create_table publik."""
     existing = set(sm.list_tables())
     if "student" not in existing:
-        sm._catalog.create_table(
-            "student",
-            (
-                ColumnSchema("id", DataType.INTEGER, nullable=False),
-                ColumnSchema("name", DataType.VARCHAR, 50),
-                ColumnSchema("gpa", DataType.FLOAT),
-            ),
-            ("id",),
-            (),
+        sm.create_table(
+            TableSchema(
+                "student",
+                [
+                    ColumnSchema("id", DataType.INTEGER, nullable=False),
+                    ColumnSchema("name", DataType.VARCHAR, 50),
+                    ColumnSchema("gpa", DataType.FLOAT),
+                ],
+                ["id"],
+            )
         )
         sm.bulk_load(
             "student",
             [[1, "Andi", 3.75], [2, "Budi", 3.20], [3, "Citra", 3.90]],
         )
     if "enrollment" not in existing:
-        sm._catalog.create_table(
-            "enrollment",
-            (
-                ColumnSchema("student_id", DataType.INTEGER, nullable=False),
-                ColumnSchema("course_id", DataType.INTEGER, nullable=False),
-            ),
-            ("student_id", "course_id"),
-            (),
+        sm.create_table(
+            TableSchema(
+                "enrollment",
+                [
+                    ColumnSchema("student_id", DataType.INTEGER, nullable=False),
+                    ColumnSchema("course_id", DataType.INTEGER, nullable=False),
+                ],
+                ["student_id", "course_id"],
+            )
         )
         sm.bulk_load("enrollment", [[1, 101], [2, 101]])
 

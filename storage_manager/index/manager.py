@@ -176,6 +176,12 @@ class IndexManager:
                     mapping[rid] = new_key
         return None
 
+    def drop_indexes(self, names: list[str]) -> None:
+        with self._lock:
+            for name in names:
+                self._indexes.pop(name, None)
+                self._rid_keys.pop(name, None)
+
     def rebuild_all(self) -> None:
         with self._lock:
             infos = [

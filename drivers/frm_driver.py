@@ -1,6 +1,6 @@
 """FR-09 driver for the Failure Recovery Manager (FRM) test scenarios.
-Run ``python3 -m drivers.frm_driver`` for all scenarios, or use ``--list``
-and ``--scenario NAME``. Each case uses a temporary WAL.
+Run ``python3 -m drivers.frm_driver`` for demo scenarios, or add ``--real``
+for scenarios using real SM and CCM. Use ``--list`` or ``--scenario NAME``.
 """
 
 from __future__ import annotations
@@ -31,8 +31,11 @@ class FRMTestDriver(_FRMScenarioCatalog):
     def __init__(
         self,
         frm_factory: Callable[[str], FailureRecoveryManagerInterface] | None = None,
+        cases: list[FRMTestScenario] | None = None,
     ) -> None:
         super().__init__(frm_factory or _default_frm_factory)
+        if cases is not None:
+            self.cases = cases
 
     def run_case(self, scenario: FRMTestScenario) -> FRMTestResult:
         context = None
@@ -84,17 +87,31 @@ class FRMTestDriver(_FRMScenarioCatalog):
 
 
 def main(argv: list[str] | None = None) -> int:
-    driver = FRMTestDriver()
     parser = argparse.ArgumentParser(description="Failure Recovery Manager driver (FR-09)")
+    parser.add_argument("--real", action="store_true", help="run scenarios with real SM and CCM")
     parser.add_argument("--list", action="store_true", help="list available scenarios")
-    parser.add_argument("--scenario", choices=[case.name for case in driver.cases],
-                        help="run one scenario")
+    parser.add_argument("--scenario", help="run one scenario (both protocols in real mode)")
     args = parser.parse_args(argv)
+    if args.real:
+        from drivers.frm_real_scenarios import RealFRMScenarioCatalog
+
+        driver = FRMTestDriver(cases=RealFRMScenarioCatalog().cases)
+    else:
+        driver = FRMTestDriver()
     if args.list:
         for case in driver.cases:
             print(f"{case.name}: {case.requirement} - {case.description}")
         return 0
-    cases = [case for case in driver.cases if case.name == args.scenario] if args.scenario else driver.cases
+    if args.scenario:
+        cases = [
+            case for case in driver.cases
+            if case.name == args.scenario
+            or args.real and case.name.rsplit("-", 1)[0] == args.scenario
+        ]
+        if not cases:
+            parser.error(f"unknown scenario: {args.scenario}")
+    else:
+        cases = driver.cases
     results = [driver.run_case(case) for case in cases]
     driver.report_results(results)
     return 1 if any(not result.passed and not result.skipped for result in results) else 0

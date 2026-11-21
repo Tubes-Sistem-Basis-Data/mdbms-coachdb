@@ -103,6 +103,11 @@ class RecordManager:
         with self._lock:
             self._reserved.discard(rid)
 
+    def forget_table(self, table: str) -> None:
+        with self._lock:
+            self._reserved = {rid for rid in self._reserved if rid.table != table}
+            self._last_page.pop(table, None)
+
     def insert(
         self,
         table: str,
