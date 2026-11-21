@@ -18,7 +18,6 @@ class ProjectionRewriter:
         while nodes:
             node = nodes.pop()
 
-            # Pertahankan Project terluar dan hapus Project langsung di bawahnya
             if isinstance(node, Project):
                 while len(node.children) == 1 and isinstance(node.children[0], Project):
                     node.children = node.children[0].children
@@ -27,11 +26,29 @@ class ProjectionRewriter:
 
         return plan
 
-    def _push_down(self, plan: PlanNode) -> PlanNode:
+    @staticmethod
+    def _same_columns(left: list[ColumnRef], right: list[ColumnRef]) -> bool:
+        if len(left) != len(right):
+            return False
+        return all(column in right for column in left) and all(column in left for column in right)
+
+    @staticmethod
+    def _has_aliases(node: Project) -> bool:
+        return any(alias is not None for alias in node.aliases)
+
+    def _needs_leaf_project(self, required_columns: list[ColumnRef], source: PlanNode) -> bool:
+        """Return False jika source adalah leaf scan dan seluruh kolomnya sudah dibutuhkan."""
+        if not isinstance(source, (TableScan, IndexScan, SubqueryScan)):
+            return True
+        if not source.output_columns:
+            return True
+        return any(column not in required_columns for column in source.output_columns)
+
+    def _push_down(self, plan: PlanNode, *, is_internal: bool = False) -> PlanNode:
         """Meneruskan hanya kolom yang masih dibutuhkan"""
 
         # Cari Project di seluruh bagian plan
-        if not isinstance(plan, Project) or len(plan.children) != 1:
+        if not isinstance(plan, Project) or len(plan.children) != 1 or not plan.columns:
             rewritten_children: list[PlanNode] = []
 
             for child_node in plan.children:
@@ -94,15 +111,33 @@ class ProjectionRewriter:
                 pending_expressions.append(expression.left)
                 pending_expressions.append(expression.right)
 
-        # Letakkan satu Project di bawah seluruh rangkaian Filter
+        # Letakkan satu Project di bawah seluruh rangkaian Filter hanya jika memang mengurangi kolom
         if filter_nodes:
             last_filter = filter_nodes[-1]
-            pushed_project = Project(columns=required_columns, children=[filter_source], output_columns=list(required_columns))
+            while (
+                isinstance(filter_source, Project)
+                and not self._has_aliases(filter_source)
+                and len(filter_source.children) == 1
+            ):
+                filter_source = filter_source.children[0]
 
-            last_filter.children[0] = self._push_down(pushed_project)
+            if self._needs_leaf_project(required_columns, filter_source):
+                pushed_project = Project(
+                    columns=required_columns,
+                    children=[filter_source],
+                    output_columns=list(required_columns),
+                )
+                last_filter.children[0] = self._push_down(pushed_project, is_internal=True)
+                filter_output = list(required_columns)
+            else:
+                last_filter.children[0] = self._push_down(filter_source)
+                filter_output = list(filter_source.output_columns)
 
             for filter_node in filter_nodes:
-                filter_node.output_columns = list(required_columns)
+                filter_node.output_columns = list(filter_output)
+
+            if is_internal and not self._has_aliases(plan) and self._same_columns(plan.columns, filter_output):
+                return child
 
             return plan
 
@@ -116,10 +151,25 @@ class ProjectionRewriter:
                 required_columns.append(child.column)
 
             sort_child = child.children[0]
-            pushed_project = Project(columns=required_columns, children=[sort_child], output_columns=list(required_columns))
+            while (
+                isinstance(sort_child, Project)
+                and not self._has_aliases(sort_child)
+                and len(sort_child.children) == 1
+            ):
+                sort_child = sort_child.children[0]
 
-            child.children[0] = self._push_down(pushed_project)
-            child.output_columns = list(required_columns)
+            if self._needs_leaf_project(required_columns, sort_child):
+                pushed_project = Project(
+                    columns=required_columns,
+                    children=[sort_child],
+                    output_columns=list(required_columns),
+                )
+                child.children[0] = self._push_down(pushed_project, is_internal=True)
+                child.output_columns = list(required_columns)
+            else:
+                child.children[0] = self._push_down(sort_child)
+                child.output_columns = list(sort_child.output_columns)
+
             return plan
 
         # Letakkan Project pada sisi kiri dan kanan Join
@@ -211,13 +261,13 @@ class ProjectionRewriter:
             if left_required:
                 left_project = Project(columns=left_required, children=[left], output_columns=list(left_required))
 
-                child.children[0] = self._push_down(left_project)
+                child.children[0] = self._push_down(left_project, is_internal=True)
 
             # Buat Project untuk sisi kanan Join
             if right_required:
                 right_project = Project(columns=right_required, children=[right], output_columns=list(right_required))
 
-                child.children[1] = self._push_down(right_project)
+                child.children[1] = self._push_down(right_project, is_internal=True)
 
             # Perbarui daftar kolom keluaran Join
             if child.kind is JoinKind.NATURAL:
