@@ -103,6 +103,15 @@ class TestLabel(unittest.TestCase):
         self.check(IndexScan(table="student", index=IDX_ID, op=CompOp.LE, high=5),
                    "IndexScan [student.idx_id: id <= 5]")
 
+    def test_index_scan_rentang_ketat(self) -> None:
+        self.check(IndexScan(table="student", index=IDX_ID, op=CompOp.GT, low=5),
+                   "IndexScan [student.idx_id: 5 < id]")
+        self.check(IndexScan(table="student", index=IDX_ID, op=CompOp.LT, high=5),
+                   "IndexScan [student.idx_id: id < 5]")
+        # batas atas inklusif karena predikat ketat di sisi lain hanya mengubah batas bawah
+        self.check(IndexScan(table="student", index=IDX_ID, op=CompOp.GT, low=1, high=10),
+                   "IndexScan [student.idx_id: 1 < id <= 10]")
+
     def test_filter(self) -> None:
         self.check(Filter(condition=Comparison(CompOp.GT, GPA, lit(3.5))), "Filter [student.gpa > 3.5]")
 
