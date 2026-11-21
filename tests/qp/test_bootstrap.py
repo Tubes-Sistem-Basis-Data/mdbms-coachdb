@@ -117,6 +117,97 @@ class TestBootstrap(unittest.TestCase):
             main.main(["--serve"])
         qp.close.assert_not_called()
 
+    def test_two_clients_via_main_serve(self) -> None:
+        import sys
+        from time import monotonic, sleep
+        from client import ClientCLI
+        from common.log import LogKind
+        from failure_recovery.log import codec
+
+        original_stdout = sys.stdout
+        previous_path = codec.get_log_path()
+        self.addCleanup(codec.set_log_path, previous_path)
+        for protocol in ("lock", "timestamp"):
+            with self.subTest(protocol=protocol), TemporaryDirectory() as tmp:
+                servers: list[QueryServer] = []
+                server_errors: list[BaseException] = []
+
+                def make_server(*args, **kwargs) -> QueryServer:
+                    server = QueryServer(*args, **kwargs)
+                    servers.append(server)
+                    return server
+
+                def run_server() -> None:
+                    try:
+                        main.main(["--serve", "--data-dir", tmp, "--protocol", protocol,
+                                   "--host", "127.0.0.1", "--port", "0"])
+                    except BaseException as exc:
+                        server_errors.append(exc)
+
+                server_output = io.StringIO()
+                with redirect_stdout(server_output), patch("main.QueryServer", side_effect=make_server):
+                    thread = Thread(target=run_server, daemon=True)
+                    clients: list[ClientCLI] = []
+                    thread.start()
+                    try:
+                        deadline = monotonic() + 5.0
+                        while (not servers or not servers[0]._running or servers[0].port == 0):
+                            if server_errors or not thread.is_alive() or monotonic() >= deadline:
+                                break
+                            sleep(0.02)
+                        self.assertEqual(server_errors, [], server_output.getvalue())
+                        self.assertTrue(servers and servers[0]._running and servers[0].port != 0)
+
+                        for _ in range(2):
+                            client = ClientCLI(host="127.0.0.1", port=servers[0].port)
+                            clients.append(client)
+                            client.connect()
+                            client._connection.settimeout(3.0)
+                        first, second = clients
+                        begin_first = first.send("BEGIN;")
+                        begin_second = second.send("BEGIN;")
+                        self.assertTrue(begin_first.ok, begin_first.message)
+                        self.assertTrue(begin_second.ok, begin_second.message)
+                        self.assertNotEqual(begin_first.message, begin_second.message)
+                        self.assertIsNotNone(first._session_id)
+                        self.assertIsNotNone(second._session_id)
+                        self.assertNotEqual(first._session_id, second._session_id)
+
+                        invalid = first.send("SELECT * FROM missing_table;")
+                        self.assertFalse(invalid.ok)
+                        self.assertIn("SEMANTIC", invalid.message)
+                        self.assertTrue(first.send("ABORT;").ok)
+                        self.assertTrue(second.send("COMMIT;").ok)
+
+                        self.assertTrue(first.send("BEGIN;").ok)
+                        first.close()
+                        self.assertTrue(second.send("BEGIN;").ok)
+                        self.assertTrue(second.send("ABORT;").ok)
+                    finally:
+                        for client in clients:
+                            client.close()
+                        for server in servers:
+                            server.shutdown()
+                        thread.join(timeout=5.0)
+                        self.assertFalse(thread.is_alive())
+                self.assertEqual(server_errors, [], server_output.getvalue())
+                self.assertIs(sys.stdout, original_stdout)
+
+                reader = main.FailureRecoveryManager(log_path=str(Path(tmp) / "wal.log"))
+                try:
+                    records = reader.read_log()
+                finally:
+                    reader.close()
+                tx_ids = [record.tx_id for record in records if record.kind is LogKind.BEGIN]
+                self.assertEqual(len(tx_ids), 4)
+                self.assertEqual(len(set(tx_ids)), 4)
+                histories = [[record.kind for record in records if record.tx_id == tx_id]
+                             for tx_id in tx_ids]
+                aborted = [LogKind.BEGIN, LogKind.ABORT_REQUEST, LogKind.ABORT]
+                self.assertCountEqual(histories, [[LogKind.BEGIN, LogKind.COMMIT]] + [aborted] * 3)
+
+        self.assertIs(sys.stdout, original_stdout)
+
 
 class TestRuntimeClose(unittest.TestCase):
     def setUp(self) -> None:

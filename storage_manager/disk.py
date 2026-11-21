@@ -95,6 +95,32 @@ class DiskManager:
                 pass
         self._files[table] = open(path, "r+b")
 
+    def delete_table_file(self, table: str) -> None:
+        """
+        @brief Menutup handle dan menghapus file .db milik tabel, aman jika file tidak ada
+        @param table (str) nama tabel yang filenya akan dihapus
+
+        @return None
+        @raise KeyError jika DiskManager sudah ditutup
+        @raise StorageError jika file gagal dihapus
+        """
+        if self._closed:
+            raise KeyError(f"DiskManager is closed (table='{table}')")
+
+        handle = self._files.pop(table, None)
+        if handle is not None:
+            try:
+                handle.close()
+            except OSError:
+                pass
+        path = os.path.join(self._data_dir, f"{table}.db")
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise StorageError(f"Gagal menghapus file tabel: {path}") from exc
+
     def read_page(self, table: str, page_id: int) -> bytearray:
         """
         @brief Membaca satu page dari file tabel dan kembalikan sebagai objek bytearray.

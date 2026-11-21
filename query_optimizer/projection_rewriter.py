@@ -49,11 +49,23 @@ class ProjectionRewriter:
             if column not in required_columns:
                 required_columns.append(column)
 
-        # Ambil kondisi Filter atau Join yang berada tepat di bawah Project
+        # Ambil seluruh Filter berurutan yang berada di bawah Project
         pending_expressions: list[Expression] = []
+        filter_nodes: list[Filter] = []
+        filter_source = child
 
         if isinstance(child, Filter):
-            pending_expressions.append(child.condition)
+            current_filter = child
+
+            while isinstance(current_filter, Filter) and len(current_filter.children) == 1:
+                filter_nodes.append(current_filter)
+                pending_expressions.append(current_filter.condition)
+                filter_source = current_filter.children[0]
+
+                if isinstance(filter_source, Filter):
+                    current_filter = filter_source
+                else:
+                    break
             
         elif isinstance(child, Join) and child.condition is not None:
             pending_expressions.append(child.condition)
@@ -82,13 +94,16 @@ class ProjectionRewriter:
                 pending_expressions.append(expression.left)
                 pending_expressions.append(expression.right)
 
-        # Letakkan Project di bawah Filter agar kolom kondisi tetap tersedia
-        if isinstance(child, Filter) and len(child.children) == 1:
-            filter_child = child.children[0]
-            pushed_project = Project(columns=required_columns, children=[filter_child], output_columns=list(required_columns))
+        # Letakkan satu Project di bawah seluruh rangkaian Filter
+        if filter_nodes:
+            last_filter = filter_nodes[-1]
+            pushed_project = Project(columns=required_columns, children=[filter_source], output_columns=list(required_columns))
 
-            child.children[0] = self._push_down(pushed_project)
-            child.output_columns = list(required_columns)
+            last_filter.children[0] = self._push_down(pushed_project)
+
+            for filter_node in filter_nodes:
+                filter_node.output_columns = list(required_columns)
+
             return plan
 
         # Letakkan Project di bawah Sort dan pertahankan kolom pengurutan

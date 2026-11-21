@@ -97,6 +97,26 @@ class TestFRMDriver(unittest.TestCase):
         self.assertIn("[PASSED] checkpoint", output.getvalue())
         self.assertIn("1 passed, 0 failed, 0 not available", output.getvalue())
 
+    def test_real_mode_runs_all_cases_on_both_protocols(self) -> None:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["--real"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("[PASSED] real-rollback-lock", output.getvalue())
+        self.assertIn("[PASSED] real-multi-tx-recovery-timestamp", output.getvalue())
+        self.assertIn("8 passed, 0 failed, 0 not available", output.getvalue())
+
+    def test_real_scenario_filter_runs_both_protocols(self) -> None:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["--real", "--scenario", "real-pitr"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("[PASSED] real-pitr-lock", output.getvalue())
+        self.assertIn("[PASSED] real-pitr-timestamp", output.getvalue())
+        self.assertIn("2 passed, 0 failed, 0 not available", output.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

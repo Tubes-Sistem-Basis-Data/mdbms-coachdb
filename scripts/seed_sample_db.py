@@ -1,4 +1,3 @@
-"""SM-14: deterministic in-memory sample and portable fixture, not disk pages."""
 from __future__ import annotations
 
 import argparse
@@ -12,7 +11,7 @@ from typing import Iterator
 
 from common import config
 from common.catalog import ColumnSchema, DataType, ForeignKey
-from common.errors import SchemaViolationError, StorageError, TableNotFoundError
+from common.errors import MdbmsError, SchemaViolationError, StorageError, TableNotFoundError
 from common.storage import RID, Row
 from storage_manager.catalog import Catalog
 from storage_manager.page import SlottedPage
@@ -20,6 +19,7 @@ from storage_manager.serializer import RecordCodec
 from storage_manager.stats import StatisticsManager
 
 FIXTURE_FILE = 'sample-db.json'
+WAL_FILE = 'wal.log'  # nama log yang dipakai main.py di dalam data dir
 
 class SampleDatabase:
     def __init__(self, catalog: Catalog, rows: dict[str, list[list]]) -> None:
@@ -140,6 +140,29 @@ class SampleDatabaseSeeder:
                 raise StorageError(f'Hasil scan setelah bulk_load tidak sesuai: {table}')
         storage.flush()
 
+    def install(self, data_dir: str) -> dict[str, int]:
+        """Buat tabel contoh lewat StorageManager.create_table lalu isi ke `data_dir`."""
+        from storage_manager.facade import StorageManager
+
+        wal = Path(data_dir) / WAL_FILE
+        if wal.exists() and wal.stat().st_size > 0:
+            raise StorageError(
+                f'{wal} sudah berisi log; pakai --data-dir yang baru/kosong '
+                'agar recovery tidak menerapkan ulang log lama ke data contoh'
+            )
+        db = self.build()
+        storage = StorageManager(data_dir)
+        try:
+            existing = set(storage.list_tables())
+            # Urutan katalog contoh sudah mendahulukan tabel yang dirujuk FK.
+            for table in db.list_tables():
+                if table not in existing:
+                    storage.create_table(db.get_schema(table))
+            self.load_into(storage)
+        finally:
+            storage.close()
+        return {table: len(list(db.scan(table))) for table in db.list_tables()}
+
     def _create_tables(self, catalog: Catalog) -> None:
         def col(name, kind, length=None):
             return ColumnSchema(name, kind, length, nullable=False)
@@ -169,15 +192,25 @@ class SampleDatabaseSeeder:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description='Buat fixture contoh untuk database in-memory (bukan page disk SM).')
+    parser = argparse.ArgumentParser(
+        description='Siapkan basis data contoh: fixture JSON (default) atau tabel SM di data dir (--install).')
     parser.add_argument('--data-dir', default=config.DATA_DIR)
     parser.add_argument('--force', action='store_true', help='ganti sample-db.json saja')
+    parser.add_argument('--install', action='store_true',
+                        help='buat tabel contoh dan isi barisnya ke data dir StorageManager (untuk main.py)')
     args = parser.parse_args()
     try:
-        SampleDatabaseSeeder().seed(args.data_dir, args.force)
-    except StorageError as exc:
+        if args.install:
+            counts = SampleDatabaseSeeder().install(args.data_dir)
+        else:
+            SampleDatabaseSeeder().seed(args.data_dir, args.force)
+    except MdbmsError as exc:
         parser.exit(1, f'ERROR: {exc}\n')
-    print(f'Fixture tersimpan: {Path(args.data_dir) / FIXTURE_FILE} (60 student, 50 course, 200 enroll)')
+    if args.install:
+        summary = ', '.join(f'{count} {table}' for table, count in counts.items())
+        print(f'Database contoh dimuat ke {args.data_dir} ({summary})')
+    else:
+        print(f'Fixture tersimpan: {Path(args.data_dir) / FIXTURE_FILE} (60 student, 50 course, 200 enroll)')
 
 
 if __name__ == '__main__':
