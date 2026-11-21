@@ -7,7 +7,7 @@ import logging
 
 from common.errors import MdbmsError, QuerySyntaxError
 from common.interfaces import QueryOptimizer, StorageManager
-from common.plan import CreateIndex, Delete, Insert, ParsedQuery, PlanNode, Update
+from common.plan import CreateIndex, CreateTable, Delete, DropTable, Insert, ParsedQuery, PlanNode, Update
 from query_optimizer.binder import Binder
 from query_optimizer.cost_model import CostModel
 from query_optimizer.join_rule_rewriter import JoinRuleRewriter
@@ -100,7 +100,7 @@ class QueryOptimizerFacade(QueryOptimizer):
             # sumber UPDATE/DELETE harus tetap scan tabel target dengan Filter, jadi proyeksi tidak dipakai
             plan.children = [self._selection.apply(child) for child in plan.children]
             return plan
-        if isinstance(plan, (Insert, CreateIndex)):
+        if isinstance(plan, (Insert, CreateIndex, CreateTable, DropTable)):
             return plan
         # join rule lebih dulu supaya kondisi antar tabel jadi kondisi join sebelum seleksi didorong
         plan = self._join_rule.apply(plan)
@@ -108,7 +108,7 @@ class QueryOptimizerFacade(QueryOptimizer):
         return self._projection.apply(plan)
 
     def _plan_cost(self, plan: PlanNode) -> float:
-        if isinstance(plan, (Insert, CreateIndex)):
+        if isinstance(plan, (Insert, CreateIndex, CreateTable, DropTable)):
             return 0.0
         if isinstance(plan, (Update, Delete)):
             return sum(self._cost_model.get_cost(child) for child in plan.children)
